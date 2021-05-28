@@ -36,7 +36,6 @@ function getView() {
 
 // delete view from viewStore
 function deleteView(view) {
-    // console.log("I found it");
     const delInd = viewStore.indexOf(view);
     if (delInd > -1) {
         viewStore.splice(delInd, 1);

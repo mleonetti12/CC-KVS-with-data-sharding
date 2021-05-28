@@ -23,7 +23,7 @@ storeRouter.route('/')
 storeRouter.route('/sync-kvs')
 .get(async (req, res) => {
     res.status(200).json({"message": "Retrieved successfully", "kvs": keyvalueStore, "cm": vectorClock});
-})
+});
 
 storeRouter.route('/:key')
 .get(async (req, res) => {
@@ -104,10 +104,10 @@ storeRouter.route('/:key')
         } else {
             //wait
             vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-            while(!await compareVectorClocks(causalMetadata)) {
-
+            while(!await compareVectorClocks(causalMetadata)) { // while causal metadata is out of date
+                await getKVS(process.env.VIEW.split(','));
             }
-            console.log('in else')
+            console.log('in else');
 
             if(keyvalueStore.hasOwnProperty(key)) {
                 keyvalueStore[key] = value;
@@ -292,20 +292,6 @@ function pointwiseMaximum(localVectorClock, incomingVectorClock) {
     return newVectorClock;
 }
 
-// // add newKVS to current KVS, only for inter-view use
-// function setKVS(newKVS) {
-//     for (var key in newKVS) {
-//         keyvalueStore[key] = newKVS[key];
-//     }
-// }
-
-// // add new causal metadata to current
-// function setCM(newCM) {
-//     for (var key in newCM) {
-//         vectorClock[key] = newCM[key];
-//     }
-// }
-
 // add newKVS to current KVS, only for inter-view use
 function setKVS(newKVS) {
     for (var key in newKVS) {
@@ -325,25 +311,71 @@ function setKVS(newKVS) {
 
 // add new causal metadata to current
 function setCM(newCM) {
-    for (var key in newCM) {
-        let updateFlag = true;
-        if (vectorClock.hasOwnProperty(key)) {
-           for(var index = 0; index < newCM[key].length; index++) {
-                if (newCM[key][index] < vectorClock[key][index]) {
-                    updateFlag = false;
+    // for (var key in newCM) {
+    //     let updateFlag = true;
+    //     if (vectorClock.hasOwnProperty(key)) {
+    //        for(var index = 0; index < newCM[key].length; index++) {
+    //             if (newCM[key][index] < vectorClock[key][index]) {
+    //                 updateFlag = false;
+    //             }
+    //         }     
+    //     }
+    //     if (updateFlag) {
+    //         vectorClock[key] = newCM[key];
+    //     }   
+    // }
+    vectorClock = pointwiseMaximum(vectorClock, newCM);
+}
+
+// get kvs from another replica and merge it with current kvs
+function getKVS(views) {
+    return new Promise(function(resolve, reject) {
+        for (var view of views) {
+            let replicadownFlag = false;
+            if (view != process.env.SOCKET_ADDRESS) {
+                const params = view.split(':');
+                const options = {
+                    protocol: 'http:',
+                    host: params[0],
+                    port: params[1],
+                    path: '/key-value-store/sync-kvs', // view only route
+                    method: 'GET',
+                    headers: {
+                    }
+                };
+                const req = http.request(options, function(res) {
+                    let body = '';
+                    res.on('data', function (chunk) {
+                        body += chunk;
+                    });
+                    res.on('end', function() {
+                        console.log(body);
+                        setKVS(JSON.parse(body).kvs); // add kvs to current KVSs
+                        setCM(JSON.parse(body).cm); // add cm to current cm
+                        resolve();
+                    })
+                });
+                req.on('error', function(error) {
+                    console.log("Error: Could not connect to replica at " + view);
+                    replicadownFlag = true; // could not retrieve KVS
+                });
+                req.end();
+                // if KVS successfully retrieved, done
+                // else try with next view in 'views'
+                if (!replicadownFlag) {
+                    break;
                 }
-            }     
+            }   
         }
-        if (updateFlag) {
-            vectorClock[key] = newCM[key];
-        }   
-    }
+        resolve();
+    })
 }
 
 // need to export setKVS function for index.js use
 // (storeRouter in index.js) -> storeRouter.router
 module.exports = {
     router:storeRouter,
-    setKVS:setKVS,
-    setCM:setCM
+    // setKVS:setKVS,
+    // setCM:setCM,
+    getKVS:getKVS
 };
