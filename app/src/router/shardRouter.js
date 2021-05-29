@@ -1,7 +1,7 @@
 const express = require('express');
 const shardRouter = express.Router();
 shardRouter.use(express.json());
-const viewRouter = require('./router/viewRouter');
+const viewRouter = require('./viewRouter');
 
 const socketAddress = process.env.SOCKET_ADDRESS;
 let shardCount = process.env.SHARD_COUNT;
