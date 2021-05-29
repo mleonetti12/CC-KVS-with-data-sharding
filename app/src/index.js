@@ -6,8 +6,10 @@ const http = require('http');
 
 const storeRouter = require('./router/storeRouter');
 const viewRouter = require('./router/viewRouter');
+const shardRouter = require('./router/shardRouter');
 app.use('/key-value-store', storeRouter.router);
 app.use('/key-value-store-view', viewRouter.router);
+app.use('/key-value-store-shard', shardRouter.router);
 
 const splitAdd = process.env.SOCKET_ADDRESS.split(':'); // get seperated socket and ip
 const views = process.env.VIEW.split(',');				// get views as array
@@ -22,7 +24,7 @@ for (view of views) {
 	promises.push(broadcastReq(view, process.env.SOCKET_ADDRESS, 'PUT'));
 }
 Promise.allSettled(promises)
-	.then(getKVS(views))
+	.then(storeRouter.getKVS(views))
 	.then(app.listen(8085, splitAdd[0], function(){
 		startGossip();
 	}))
@@ -157,46 +159,46 @@ function broadcastReq(view, add, method) {
 	})
 }
 
-// get kvs from another replica and merge it with current kvs
-function getKVS(views) {
-	return new Promise(function(resolve, reject) {
-		for (var view of views) {
-			let replicadownFlag = false;
-			if (view != process.env.SOCKET_ADDRESS) {
-				const params = view.split(':');
-				const options = {
-					protocol: 'http:',
-					host: params[0],
-					port: params[1],
-					path: '/key-value-store/sync-kvs', // view only route
-					method: 'GET',
-	    			headers: {
-	  				}
-				};
-				const req = http.request(options, function(res) {
-					let body = '';
-					res.on('data', function (chunk) {
-						body += chunk;
-					});
-					res.on('end', function() {
-						console.log(body);
-						storeRouter.setKVS(JSON.parse(body).kvs); // add kvs to current vks
-						storeRouter.setCM(JSON.parse(body).cm); // add cm to current cm
-						resolve();
-					})
-				});
-				req.on('error', function(err) {
-					console.log("Error: Could not connect to replica at " + view);
-					replicadownFlag = true; // could not retrieve KVS
-				});
-				req.end();
-				// if KVS successfully retrieved, done
-				// else try with next view in 'views'
-				if (!replicadownFlag) {
-					break;
-				}
-			}	
-		}
-		resolve();
-	})
-}
+// // get kvs from another replica and merge it with current kvs
+// function getKVS(views) {
+// 	return new Promise(function(resolve, reject) {
+// 		for (var view of views) {
+// 			let replicadownFlag = false;
+// 			if (view != process.env.SOCKET_ADDRESS) {
+// 				const params = view.split(':');
+// 				const options = {
+// 					protocol: 'http:',
+// 					host: params[0],
+// 					port: params[1],
+// 					path: '/key-value-store/sync-kvs', // view only route
+// 					method: 'GET',
+// 	    			headers: {
+// 	  				}
+// 				};
+// 				const req = http.request(options, function(res) {
+// 					let body = '';
+// 					res.on('data', function (chunk) {
+// 						body += chunk;
+// 					});
+// 					res.on('end', function() {
+// 						console.log(body);
+// 						storeRouter.setKVS(JSON.parse(body).kvs); // add kvs to current vks
+// 						storeRouter.setCM(JSON.parse(body).cm); // add cm to current cm
+// 						resolve();
+// 					})
+// 				});
+// 				req.on('error', function(err) {
+// 					console.log("Error: Could not connect to replica at " + view);
+// 					replicadownFlag = true; // could not retrieve KVS
+// 				});
+// 				req.end();
+// 				// if KVS successfully retrieved, done
+// 				// else try with next view in 'views'
+// 				if (!replicadownFlag) {
+// 					break;
+// 				}
+// 			}	
+// 		}
+// 		resolve();
+// 	})
+// }
