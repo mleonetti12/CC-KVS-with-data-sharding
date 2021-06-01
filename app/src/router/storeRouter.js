@@ -7,9 +7,16 @@ const keyvalueStore = {};
 var vectorClock = {};
 const OFFSET = 2;
 
+var HashRing = require('hashring');
+
 //Every view that may be occupied by a replica.
 var views = process.env.VIEW.split(',');  //10.0.0.2:8085, 10.0.0.3:8085, 10.0.0.4:8085
 var numViews = views.length;
+
+var ring = new HashRing([
+    "1", "2", "3", "4", "5", "6"
+], 'md5');
+
 
 storeRouter.route('/')
 .all((req, res, next) => {
@@ -61,9 +68,14 @@ storeRouter.route('/:key')
         });
     } else {
 
+        var hashedKey = ring.hash(key)
+        var shardId = ring.get(hashedKey);
+
+        
+        //if()
+
         if(causalMetadata.length == 0) {
             keyvalueStore[key] = value;
-            //vectorClock[key] = [0, 0, 0];
             vectorClock[key] = [];
             for(var i = 0; i < numViews; i++) {
                 vectorClock[key].push(0);
