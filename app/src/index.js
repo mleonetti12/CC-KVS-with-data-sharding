@@ -84,12 +84,12 @@ async function startGossip() {
 					body += chunk;
 				});
 				res.on('end', function() {
-					console.log(randomView + " " + body);
+					// console.log(randomView + " " + body);
 				})
 			});
 			// on timeout assume down
 			req.on('timeout', () => {
-				console.log("deleting: " + randomView);
+				// console.log("deleting: " + randomView);
 				viewRouter.deleteView(randomView); //delete down view from viewStore
 				deleteBroadcast(tempView, randomView); //broadcast DELETE
 				clearInterval(gossipEngine); // stop gossiping temporarily
@@ -144,7 +144,7 @@ function broadcastReq(view, add, method) {
 					body += chunk;
 				});
 				res.on('end', function() {
-					console.log(body);
+					// console.log(body);
 					resolve();
 
 				})
