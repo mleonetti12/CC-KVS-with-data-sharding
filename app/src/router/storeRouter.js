@@ -3,6 +3,8 @@ const storeRouter = express.Router();
 storeRouter.use(express.json());
 const http = require('http');
 
+const shardRouter = require("./shardRouter.js")
+
 const keyvalueStore = {};
 var vectorClock = {};
 const OFFSET = 2;
@@ -71,84 +73,130 @@ storeRouter.route('/:key')
         var hashedKey = ring.hash(key)
         var shardId = ring.get(hashedKey);
 
-        
-        //if()
+        var shards = shardRouter.getShards();
 
-        if(causalMetadata.length == 0) {
-            keyvalueStore[key] = value;
-            vectorClock[key] = [];
-            for(var i = 0; i < numViews; i++) {
-                vectorClock[key].push(0);
-            }
-            vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
-            res.status(201).json({
-                "message": "Added successfully",
-                "causal-metadata": vectorClock
-            });
-        } else if(await compareVectorClocks(causalMetadata)) {
-            if(keyvalueStore.hasOwnProperty(key)) {
-                keyvalueStore[key] = value;
-                if(req.body['broadcast']) {
-                    vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-                } else {
-                    vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
-                }
-                res.status(200).json({
-                    "message": "Updated successfully",
-                    "causal-metadata": vectorClock
-                });
-            } else {
+        var nodes = shards[shardId]
+
+        if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+
+            if(causalMetadata.length == 0) {
                 keyvalueStore[key] = value;
                 vectorClock[key] = [];
                 for(var i = 0; i < numViews; i++) {
                     vectorClock[key].push(0);
                 }
-                if(req.body['broadcast']) {
-                    vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-                } else {
-                    vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
-                }
+                vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
                 res.status(201).json({
                     "message": "Added successfully",
                     "causal-metadata": vectorClock
                 });
+            } else if(await compareVectorClocks(causalMetadata)) {
+                if(keyvalueStore.hasOwnProperty(key)) {
+                    keyvalueStore[key] = value;
+                    if(req.body['broadcast']) {
+                        vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                    } else {
+                        vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
+                    }
+                    res.status(200).json({
+                        "message": "Updated successfully",
+                        "causal-metadata": vectorClock
+                    });
+                } else {
+                    keyvalueStore[key] = value;
+                    vectorClock[key] = [];
+                    for(var i = 0; i < numViews; i++) {
+                        vectorClock[key].push(0);
+                    }
+                    if(req.body['broadcast']) {
+                        vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                    } else {
+                        vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
+                    }
+                    res.status(201).json({
+                        "message": "Added successfully",
+                        "causal-metadata": vectorClock
+                    });
+                }
+            } else {
+                //wait
+                vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                while(!await compareVectorClocks(causalMetadata)) { // while causal metadata is out of date
+                    await getKVS(process.env.VIEW.split(','));
+                }
+                console.log('in else');
+
+                if(keyvalueStore.hasOwnProperty(key)) {
+                    keyvalueStore[key] = value;
+                    if(req.body['broadcast']) {
+                        vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                    } else {
+                        vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
+                    }
+                    res.status(200).json({
+                        "message": "Updated successfully",
+                        "causal-metadata": vectorClock
+                    });
+                } else {
+                    keyvalueStore[key] = value;
+                    vectorClock[key] = [];
+                    for(var i = 0; i < numViews; i++) {
+                        vectorClock[key].push(0);
+                    }
+                    if(req.body['broadcast']) {
+                        vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                    } else {
+                        vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
+                    }
+                    res.status(201).json({
+                        "message": "Added successfully",
+                        "causal-metadata": vectorClock
+                    });
+                }
             }
+
         } else {
-            //wait
-            vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-            while(!await compareVectorClocks(causalMetadata)) { // while causal metadata is out of date
-                await getKVS(process.env.VIEW.split(','));
-            }
-            console.log('in else');
 
-            if(keyvalueStore.hasOwnProperty(key)) {
-                keyvalueStore[key] = value;
-                if(req.body['broadcast']) {
-                    vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-                } else {
-                    vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
-                }
-                res.status(200).json({
-                    "message": "Updated successfully",
-                    "causal-metadata": vectorClock
+            var node = nodes[0];
+
+            const REPLICA_HOST = node.split(':')[0];
+            const port = node.split(':')[1];
+
+            const data = JSON.stringify({
+                "value": value,
+                "causal-metadata": causalMetadata,
+                "broadcast": true
+            });
+            const options = {
+                protocol: 'http:',
+                host: REPLICA_HOST,
+                port: port,
+                //params: 
+                path: `/key-value-store/${key}`,
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': data.length
+                    }
+            };
+            const req = http.request(options, function(res) {
+                console.log(res.statusCode);
+                let body = '';
+                res.on('data', function (chunk) {
+                    body += chunk;
                 });
-            } else {
-                keyvalueStore[key] = value;
-                vectorClock[key] = [];
-                for(var i = 0; i < numViews; i++) {
-                    vectorClock[key].push(0);
-                }
-                if(req.body['broadcast']) {
-                    vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-                } else {
-                    vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
-                }
-                res.status(201).json({
-                    "message": "Added successfully",
-                    "causal-metadata": vectorClock
-                });
-            }
+                res.on('end', function() {
+                    console.log(body);
+                })
+            });
+            req.on('error', function(err) {
+                console.log("Error: Request failed at " + view);
+            });
+            req.write(data);
+            req.end();
+    
         }
+
         if(!req.body['broadcast']) {
             causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock);
         }
