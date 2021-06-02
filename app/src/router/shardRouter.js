@@ -3,6 +3,7 @@ const shardRouter = express.Router();
 shardRouter.use(express.json());
 const viewRouter = require('./viewRouter');
 const storeRouter = require('./storeRouter');
+const http = require('http');
 
 const socketAddress = process.env.SOCKET_ADDRESS;
 let shardCount = process.env.SHARD_COUNT;
@@ -10,7 +11,9 @@ let shards = {};
 let shardKeyNums = {'testID':15};
 let thisShard = '-1';
 
-shardNodes(viewRouter.getView(), shardCount);
+if (shardCount) {
+   shardNodes(viewRouter.getView(), shardCount); 
+}
 
 shardRouter.route('/shard-ids') // should be good
 .get(async (req, res, next) => {
@@ -52,7 +55,9 @@ shardRouter.route('/add-member/:shardId')
 .put(async (req, res, next) => {
     const id = req.params.shardId;
     let members = shards[id];
+    console.log(members);
     let node = req.body["socket-address"];
+    console.log(node);
     if (!members) {
         res.status(404).json({"error": "Shard ID does not exist", "message": "error in PUT"});
     } else {
@@ -61,13 +66,15 @@ shardRouter.route('/add-member/:shardId')
         } else if (!members.includes(node)) {
             members.push(node);
             // send req to this node to update kvs, also set its thisShard
-            Req(node, 'PUT', '/key-value-store-shard/update/' + id);
+            Req(node, 'PUT', '/key-value-store-shard/update/' + id, {"ss": shards});
             // then broadcast this PUT to other nodes
             for (var view of viewRouter.getView()) {
                 Req(view, 'PUT', '/key-value-store-shard/add-member/' + id, {"socket-address":node});
             }
             res.status(200).send();
-        }   
+        } else {
+            res.status(400).json({"error": "Node already exists in shard", "message": "error in PUT"});
+        } 
     }    
 });
 
@@ -75,12 +82,26 @@ shardRouter.route('/update/:shardId')
 .put(async (req, res, next) => {
     const id = req.params.shardId;
     thisShard = id.toString();
-    let members = shards[id];
-    // let body = await Get(members[0], 'ROUTE TO GET ENTIRE KVS')
-    // parse body here and set this KVS to the one parsed from body
-    res.status(200).send();
+    shards = req.body["ss"];
+    // if (members) {
+        
+    //     // let body2 = Get(members[0], '/key-value-store/sync-kvs');
+    //     console.log("this is what its setting its shards as " + JSON.parse(body1).ss);
+    //     shards = JSON.parse(body1).ss;
+    //     // storeRouter.setKVS(JSON.parse(body2).kvs); // add kvs to current KVSs
+    //     // storeRouter.setCM(JSON.parse(body2).cm); // add cm to current cm
+    //     res.status(200).send(); 
+    // } else {
+    //    res.status(400).send(); 
+    // }
+    res.status(200).send(); 
+    
 });
 
+shardRouter.route('/sync-shard')
+.get(async (req, res) => {
+    res.status(200).json({"message": "Retrieved successfully", "ss": shards});
+});
 
 
 shardRouter.route('/reshard')
@@ -127,11 +148,15 @@ function getShards() {
     return shards;
 }
 
-function Req(view, method, path, data) {
-    return new Promise(function(resolve, reject) {
+function getThisShard() {
+    return thisShard;
+}
+
+function Req(view, method, path, dat) {
+    // return new Promise(function(resolve, reject) {
         if (view != process.env.SOCKET_ADDRESS) {
             const params = view.split(':');
-            const data = JSON.stringify(data);
+            const data = JSON.stringify(dat);
             const options = {
                 protocol: 'http:',
                 host: params[0],
@@ -151,17 +176,17 @@ function Req(view, method, path, data) {
                 });
                 res.on('end', function() {
                     console.log(body);
-                    resolve();
+                    // resolve();
                 })
             });
             req.on('error', function(err) {
                 console.log("Error: Could not connect to replica at " + view);
-                reject();
+                // reject();
             });
             req.write(data);
             req.end();
         }   
-    })
+    // })
 }
 
 function Get(view, path) {
@@ -185,6 +210,7 @@ function Get(view, path) {
                 });
                 res.on('end', function() {
                     resolve(body);
+                    // return body;
                 })
             });
             req.on('error', function(err) {
@@ -198,5 +224,6 @@ function Get(view, path) {
 
 module.exports = {
     router:shardRouter,
-    getShards:getShards
+    getShards:getShards,
+    getThisShard:getThisShard
 };

@@ -3,13 +3,24 @@ const storeRouter = express.Router();
 storeRouter.use(express.json());
 const http = require('http');
 
+const shardRouter = require("./shardRouter.js")
+
 const keyvalueStore = {};
 var vectorClock = {};
 const OFFSET = 2;
 
+var HashRing = require('hashring');
+
 //Every view that may be occupied by a replica.
 var views = process.env.VIEW.split(',');  //10.0.0.2:8085, 10.0.0.3:8085, 10.0.0.4:8085
 var numViews = views.length;
+
+let tempRing = [];
+for (var i=1; i<= process.env.SHARD_COUNT; i++) {
+    tempRing.push(i.toString());
+}
+var ring = new HashRing(tempRing, 'md5');
+
 
 storeRouter.route('/')
 .all((req, res, next) => {
@@ -61,82 +72,133 @@ storeRouter.route('/:key')
         });
     } else {
 
-        if(causalMetadata.length == 0) {
-            keyvalueStore[key] = value;
-            //vectorClock[key] = [0, 0, 0];
-            vectorClock[key] = [];
-            for(var i = 0; i < numViews; i++) {
-                vectorClock[key].push(0);
-            }
-            vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
-            res.status(201).json({
-                "message": "Added successfully",
-                "causal-metadata": vectorClock
-            });
-        } else if(await compareVectorClocks(causalMetadata)) {
-            if(keyvalueStore.hasOwnProperty(key)) {
-                keyvalueStore[key] = value;
-                if(req.body['broadcast']) {
-                    vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-                } else {
-                    vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
-                }
-                res.status(200).json({
-                    "message": "Updated successfully",
-                    "causal-metadata": vectorClock
-                });
-            } else {
-                keyvalueStore[key] = value;
-                vectorClock[key] = [];
-                for(var i = 0; i < numViews; i++) {
-                    vectorClock[key].push(0);
-                }
-                if(req.body['broadcast']) {
-                    vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-                } else {
-                    vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
-                }
-                res.status(201).json({
-                    "message": "Added successfully",
-                    "causal-metadata": vectorClock
-                });
-            }
-        } else {
-            //wait
-            vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-            while(!await compareVectorClocks(causalMetadata)) { // while causal metadata is out of date
-                await getKVS(process.env.VIEW.split(','));
-            }
-            console.log('in else');
+        var hashedKey = ring.hash(key)
+        var shardId = ring.get(hashedKey);
 
-            if(keyvalueStore.hasOwnProperty(key)) {
-                keyvalueStore[key] = value;
-                if(req.body['broadcast']) {
-                    vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-                } else {
-                    vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
-                }
-                res.status(200).json({
-                    "message": "Updated successfully",
-                    "causal-metadata": vectorClock
-                });
-            } else {
+        var shards = shardRouter.getShards();
+
+        var nodes = shards[shardId]
+
+        if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+
+            if(causalMetadata.length == 0) {
                 keyvalueStore[key] = value;
                 vectorClock[key] = [];
                 for(var i = 0; i < numViews; i++) {
                     vectorClock[key].push(0);
                 }
-                if(req.body['broadcast']) {
-                    vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
-                } else {
-                    vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
-                }
+                vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
                 res.status(201).json({
                     "message": "Added successfully",
                     "causal-metadata": vectorClock
                 });
+            } else if(await compareVectorClocks(causalMetadata)) {
+                if(keyvalueStore.hasOwnProperty(key)) {
+                    keyvalueStore[key] = value;
+                    if(req.body['broadcast']) {
+                        vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                    } else {
+                        vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
+                    }
+                    res.status(200).json({
+                        "message": "Updated successfully",
+                        "causal-metadata": vectorClock
+                    });
+                } else {
+                    keyvalueStore[key] = value;
+                    vectorClock[key] = [];
+                    for(var i = 0; i < numViews; i++) {
+                        vectorClock[key].push(0);
+                    }
+                    if(req.body['broadcast']) {
+                        vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                    } else {
+                        vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
+                    }
+                    res.status(201).json({
+                        "message": "Added successfully",
+                        "causal-metadata": vectorClock
+                    });
+                }
+            } else {
+                //wait
+                vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                while(!await compareVectorClocks(causalMetadata)) { // while causal metadata is out of date
+                    await getKVS(process.env.VIEW.split(','));
+                }
+                console.log('in else');
+
+                if(keyvalueStore.hasOwnProperty(key)) {
+                    keyvalueStore[key] = value;
+                    if(req.body['broadcast']) {
+                        vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                    } else {
+                        vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
+                    }
+                    res.status(200).json({
+                        "message": "Updated successfully",
+                        "causal-metadata": vectorClock
+                    });
+                } else {
+                    keyvalueStore[key] = value;
+                    vectorClock[key] = [];
+                    for(var i = 0; i < numViews; i++) {
+                        vectorClock[key].push(0);
+                    }
+                    if(req.body['broadcast']) {
+                        vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
+                    } else {
+                        vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
+                    }
+                    res.status(201).json({
+                        "message": "Added successfully",
+                        "causal-metadata": vectorClock
+                    });
+                }
             }
+
+        } else {
+
+            var node = nodes[0];
+
+            const REPLICA_HOST = node.split(':')[0];
+            const port = node.split(':')[1];
+
+            const data = JSON.stringify({
+                "value": value,
+                "causal-metadata": causalMetadata,
+                "broadcast": true
+            });
+            const options = {
+                protocol: 'http:',
+                host: REPLICA_HOST,
+                port: port,
+                //params: 
+                path: `/key-value-store/${key}`,
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': data.length
+                    }
+            };
+            const req = http.request(options, function(res) {
+                console.log(res.statusCode);
+                let body = '';
+                res.on('data', function (chunk) {
+                    body += chunk;
+                });
+                res.on('end', function() {
+                    console.log(body);
+                })
+            });
+            req.on('error', function(err) {
+                console.log("Error: Request failed at " + view);
+            });
+            req.write(data);
+            req.end();
+    
         }
+
         if(!req.body['broadcast']) {
             causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock);
         }
@@ -332,6 +394,7 @@ function getKVS(views) {
     return new Promise(function(resolve, reject) {
         for (var view of views) {
             let replicadownFlag = false;
+            // const shards = shardRouter.getShards(); && shards[shardRouter.getThisShard()].includes(view)
             if (view != process.env.SOCKET_ADDRESS) {
                 const params = view.split(':');
                 const options = {
@@ -375,7 +438,7 @@ function getKVS(views) {
 // (storeRouter in index.js) -> storeRouter.router
 module.exports = {
     router:storeRouter,
-    // setKVS:setKVS,
-    // setCM:setCM,
+    setKVS:setKVS,
+    setCM:setCM,
     getKVS:getKVS
 };
