@@ -164,8 +164,7 @@ storeRouter.route('/:key')
 
             const data = JSON.stringify({
                 "value": value,
-                "causal-metadata": causalMetadata,
-                "broadcast": true
+                "causal-metadata": causalMetadata
             });
             const options = {
                 protocol: 'http:',
@@ -179,14 +178,17 @@ storeRouter.route('/:key')
                     'Content-Length': data.length
                     }
             };
-            const req = http.request(options, function(res) {
-                console.log(res.statusCode);
+            const req = http.request(options, function(resForward) {
+                console.log(resForward.statusCode);
                 let body = '';
-                res.on('data', function (chunk) {
+                resForward.on('data', function (chunk) {
                     body += chunk;
                 });
-                res.on('end', function() {
+                resForward.on('end', function() {
                     console.log(body);
+                    res.json({
+                        body
+                    })
                 })
             });
             req.on('error', function(err) {
@@ -194,7 +196,6 @@ storeRouter.route('/:key')
             });
             req.write(data);
             req.end();
-    
         }
 
         if(!req.body['broadcast']) {
