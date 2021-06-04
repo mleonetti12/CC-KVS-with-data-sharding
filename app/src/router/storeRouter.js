@@ -15,10 +15,124 @@ var HashRing = require('hashring');
 var views = process.env.VIEW.split(',');  //10.0.0.2:8085, 10.0.0.3:8085, 10.0.0.4:8085
 var numViews = views.length;
 
-var ring = new HashRing([
-    "1", "2", "3", "4", "5", "6"
-], 'md5');
+let tempRing = [];
+for (var i=1; i<= process.env.SHARD_COUNT; i++) {
+    tempRing.push(i.toString());
+}
+var ring = new HashRing(tempRing, 'md5');
 
+
+// add newKVS to current KVS, only for inter-view use
+function setKVS(newKVS) {
+    for (var key in newKVS) {
+        let updateFlag = true;
+        if (vectorClock.hasOwnProperty(key)) {
+           for(var index = 0; index < newCM[key].length; index++) {
+                if (newCM[key][index] < vectorClock[key][index]) {
+                    updateFlag = false;
+                }
+            }     
+        }
+        if (updateFlag) {
+            keyvalueStore[key] = newKVS[key];
+        }   
+    }
+}
+
+function replaceKVS(newKVS) {
+    keyValueStore = newKVS;
+}
+
+function replaceCM(newCM) {
+    causalMetadata = newCM;
+}
+
+function getLength() {
+    return (Object.keys(keyvalueStore)).length;
+}
+
+// add new causal metadata to current
+function setCM(newCM) {
+    // for (var key in newCM) {
+    //     let updateFlag = true;
+    //     if (vectorClock.hasOwnProperty(key)) {
+    //        for(var index = 0; index < newCM[key].length; index++) {
+    //             if (newCM[key][index] < vectorClock[key][index]) {
+    //                 updateFlag = false;
+    //             }
+    //         }     
+    //     }
+    //     if (updateFlag) {
+    //         vectorClock[key] = newCM[key];
+    //     }   
+    // }
+    vectorClock = pointwiseMaximum(vectorClock, newCM);
+}
+
+// get kvs from another replica and merge it with current kvs
+function getKVS(views, replace) {
+    return new Promise(function(resolve, reject) {
+        for (var view of views) {
+            let replicadownFlag = false;
+            // const shards = shardRouter.getShards(); && shards[shardRouter.getThisShard()].includes(view)
+            if (view != process.env.SOCKET_ADDRESS) {
+                const params = view.split(':');
+                const options = {
+                    protocol: 'http:',
+                    host: params[0],
+                    port: params[1],
+                    path: '/key-value-store/sync-kvs', // view only route
+                    method: 'GET',
+                    headers: {
+                    }
+                };
+                const req = http.request(options, function(res) {
+                    let body = '';
+                    res.on('data', function (chunk) {
+                        body += chunk;
+                    });
+                    res.on('end', function() {
+                        console.log(body);
+                        if (replace) {
+                            setKVS(JSON.parse(body).kvs); // add kvs to current KVSs
+                            setCM(JSON.parse(body).cm); // add cm to current cm  
+                        } else {
+                            replaceKVS(JSON.parse(body).kvs); // replace
+                            replaceCM(JSON.parse(body).cm); // replace  
+                        }
+                        
+                        resolve();
+                    })
+                });
+                req.on('error', function(error) {
+                    console.log("Error: Could not connect to replica at " + view);
+                    replicadownFlag = true; // could not retrieve KVS
+                });
+                req.end();
+                // if KVS successfully retrieved, done
+                // else try with next view in 'views'
+                if (!replicadownFlag) {
+                    break;
+                }
+            }   
+        }
+        resolve();
+    })
+}
+
+// need to export setKVS function for index.js use
+// (storeRouter in index.js) -> storeRouter.router
+module.exports = {
+    router:storeRouter,
+    setKVS:setKVS,
+    setCM:setCM,
+    getKVS:getKVS,
+    replaceKVS:replaceKVS,
+    replaceCM:replaceCM,
+    getLength:getLength
+};
+
+const shardRouter = require("./shardRouter.js")
 
 storeRouter.route('/')
 .all((req, res, next) => {
@@ -353,90 +467,3 @@ function pointwiseMaximum(localVectorClock, incomingVectorClock) {
     return newVectorClock;
 }
 
-// add newKVS to current KVS, only for inter-view use
-function setKVS(newKVS) {
-    for (var key in newKVS) {
-        let updateFlag = true;
-        if (vectorClock.hasOwnProperty(key)) {
-           for(var index = 0; index < newCM[key].length; index++) {
-                if (newCM[key][index] < vectorClock[key][index]) {
-                    updateFlag = false;
-                }
-            }     
-        }
-        if (updateFlag) {
-            keyvalueStore[key] = newKVS[key];
-        }   
-    }
-}
-
-// add new causal metadata to current
-function setCM(newCM) {
-    // for (var key in newCM) {
-    //     let updateFlag = true;
-    //     if (vectorClock.hasOwnProperty(key)) {
-    //        for(var index = 0; index < newCM[key].length; index++) {
-    //             if (newCM[key][index] < vectorClock[key][index]) {
-    //                 updateFlag = false;
-    //             }
-    //         }     
-    //     }
-    //     if (updateFlag) {
-    //         vectorClock[key] = newCM[key];
-    //     }   
-    // }
-    vectorClock = pointwiseMaximum(vectorClock, newCM);
-}
-
-// get kvs from another replica and merge it with current kvs
-function getKVS(views) {
-    return new Promise(function(resolve, reject) {
-        for (var view of views) {
-            let replicadownFlag = false;
-            if (view != process.env.SOCKET_ADDRESS) {
-                const params = view.split(':');
-                const options = {
-                    protocol: 'http:',
-                    host: params[0],
-                    port: params[1],
-                    path: '/key-value-store/sync-kvs', // view only route
-                    method: 'GET',
-                    headers: {
-                    }
-                };
-                const req = http.request(options, function(res) {
-                    let body = '';
-                    res.on('data', function (chunk) {
-                        body += chunk;
-                    });
-                    res.on('end', function() {
-                        console.log(body);
-                        setKVS(JSON.parse(body).kvs); // add kvs to current KVSs
-                        setCM(JSON.parse(body).cm); // add cm to current cm
-                        resolve();
-                    })
-                });
-                req.on('error', function(error) {
-                    console.log("Error: Could not connect to replica at " + view);
-                    replicadownFlag = true; // could not retrieve KVS
-                });
-                req.end();
-                // if KVS successfully retrieved, done
-                // else try with next view in 'views'
-                if (!replicadownFlag) {
-                    break;
-                }
-            }   
-        }
-        resolve();
-    })
-}
-
-// need to export setKVS function for index.js use
-// (storeRouter in index.js) -> storeRouter.router
-module.exports = {
-    router:storeRouter,
-    // setKVS:setKVS,
-    // setCM:setCM,
-    getKVS:getKVS
-};

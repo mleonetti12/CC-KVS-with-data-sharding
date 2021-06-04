@@ -2,7 +2,8 @@ const express = require('express');
 const shardRouter = express.Router();
 shardRouter.use(express.json());
 const viewRouter = require('./viewRouter');
-const storeRouter = require('./storeRouter');
+
+const http = require('http');
 
 const socketAddress = process.env.SOCKET_ADDRESS;
 let shardCount = process.env.SHARD_COUNT;
@@ -10,7 +11,25 @@ let shards = {};
 let shardKeyNums = {'testID':15};
 let thisShard = '-1';
 
-shardNodes(viewRouter.getView(), shardCount);
+if (shardCount) {
+   shardNodes(viewRouter.getView(), shardCount); 
+}
+
+function getShards() {
+    return shards;
+}
+
+function getThisShard() {
+    return thisShard;
+}
+
+module.exports = {
+    router:shardRouter,
+    getShards:getShards,
+    getThisShard:getThisShard
+};
+
+const storeRouter = require('./storeRouter');
 
 shardRouter.route('/shard-ids') // should be good
 .get(async (req, res, next) => {
@@ -39,11 +58,14 @@ shardRouter.route('/shard-id-members/:shardId') // should be good
 shardRouter.route('/shard-id-key-count/:shardId')
 .get(async (req, res, next) => {
     const id = req.params.shardId;
-    // temporary until implement kvs
-    let keyNum = 0;
-    // have a getter function/global var that gets/holds the num keys in each shard
-    if (!keyNum) {
-        keyNum = 0;
+    let keyNum = -1;
+    if (id == thisShard) {
+        keyNum = storeRouter.getLength();
+        // keyNum = 10;
+    } else {
+        let body = await Get(shards[id], '/key-value-store/sync-kvs');
+        // console.log(body);
+        keyNum = Object.keys(JSON.parse(body).kvs).length;
     }
     res.status(200).json({"message":"Key count of shard ID retrieved successfully", "shard-id-key-count": keyNum});
 });
@@ -52,7 +74,9 @@ shardRouter.route('/add-member/:shardId')
 .put(async (req, res, next) => {
     const id = req.params.shardId;
     let members = shards[id];
+    console.log(members);
     let node = req.body["socket-address"];
+    console.log(node);
     if (!members) {
         res.status(404).json({"error": "Shard ID does not exist", "message": "error in PUT"});
     } else {
@@ -61,27 +85,32 @@ shardRouter.route('/add-member/:shardId')
         } else if (!members.includes(node)) {
             members.push(node);
             // send req to this node to update kvs, also set its thisShard
-            Req(node, 'PUT', '/key-value-store-shard/update/' + id);
+            Req(node, 'PUT', '/key-value-store-shard/update/' + id, {"ss": shards});
             // then broadcast this PUT to other nodes
             for (var view of viewRouter.getView()) {
                 Req(view, 'PUT', '/key-value-store-shard/add-member/' + id, {"socket-address":node});
             }
             res.status(200).send();
-        }   
+        } else {
+            res.status(400).json({"error": "Node already exists in shard", "message": "error in PUT"});
+        } 
     }    
 });
 
 shardRouter.route('/update/:shardId')
 .put(async (req, res, next) => {
     const id = req.params.shardId;
-    thisShard = id.toString();
-    let members = shards[id];
-    // let body = await Get(members[0], 'ROUTE TO GET ENTIRE KVS')
-    // parse body here and set this KVS to the one parsed from body
-    res.status(200).send();
+    // thisShard = id.toString();
+    shards = req.body["ss"];
+    await storeRouter.getKVS(shards[id], true);
+    res.status(200).send(); 
+    
 });
 
-
+shardRouter.route('/sync-shard')
+.get(async (req, res) => {
+    res.status(200).json({"message": "Retrieved successfully", "ss": shards});
+});
 
 shardRouter.route('/reshard')
 .put(async (req, res, next) => {
@@ -123,15 +152,11 @@ function shardNodes(nodes, shardCount) {
     // need to send excess data to other nodes
 }
 
-function getShards() {
-    return shards;
-}
-
-function Req(view, method, path, data) {
-    return new Promise(function(resolve, reject) {
+function Req(view, method, path, dat) {
+    // return new Promise(function(resolve, reject) {
         if (view != process.env.SOCKET_ADDRESS) {
             const params = view.split(':');
-            const data = JSON.stringify(data);
+            const data = JSON.stringify(dat);
             const options = {
                 protocol: 'http:',
                 host: params[0],
@@ -151,52 +176,59 @@ function Req(view, method, path, data) {
                 });
                 res.on('end', function() {
                     console.log(body);
-                    resolve();
+                    // resolve();
                 })
             });
             req.on('error', function(err) {
                 console.log("Error: Could not connect to replica at " + view);
-                reject();
+                // reject();
             });
             req.write(data);
             req.end();
         }   
-    })
+    // })
 }
 
-function Get(view, path) {
+function Get(views, path) {
     return new Promise(function(resolve, reject) {
-        if (view != process.env.SOCKET_ADDRESS) {
-            const params = view.split(':');
-            const options = {
-                protocol: 'http:',
-                host: params[0],
-                port: params[1],
-                path: path,
-                method: 'GET',
-                headers: {
-                }
-            };
-            const req = http.request(options, function(res) {
-                console.log(res.statusCode);
-                let body = '';
-                res.on('data', function (chunk) {
-                    body += chunk;
+        for (var view of views) {
+            let replicadownFlag = false;
+            if (view != process.env.SOCKET_ADDRESS) {
+                const params = view.split(':');
+                const options = {
+                    protocol: 'http:',
+                    host: params[0],
+                    port: params[1],
+                    path: path,
+                    method: 'GET',
+                    headers: {
+                    }
+                };
+                const req = http.request(options, function(res) {
+                    console.log(res.statusCode);
+                    let body = '';
+                    res.on('data', function (chunk) {
+                        body += chunk;
+                    });
+                    res.on('end', function() {
+                        resolve(body);
+                        // return body;
+                    })
                 });
-                res.on('end', function() {
-                    resolve(body);
-                })
-            });
-            req.on('error', function(err) {
-                console.log("Error: Could not connect to replica at " + view);
-                reject();
-            });
-            req.end();
-        }   
+                req.on('error', function(err) {
+                    console.log("Error: Could not connect to replica at " + view);
+                    replicadownFlag = true;
+                });
+                req.end();
+                if (!replicadownFlag) {
+                    break;
+                }
+            }  
+        }
     })
 }
 
-module.exports = {
-    router:shardRouter,
-    getShards:getShards
-};
+
+
+
+
