@@ -213,11 +213,15 @@ storeRouter.route('/update-hash')
 storeRouter.route('/:key')
 .get(async (req, res) => {
 
-  //  var hashedKey = ring.hash(key);
-    var shardId = ring.get(key);
-
+   // console.log('In storeRouter GET - key:',key)
+    var hashedKey = ring.hash(key);
+  //  console.log('In storeRouter GET - hashedKey:',hashedKey)
+    var shardId = ring.get(hashedKey);
+ //   console.log('In storeRouter GET - shardId:',shardId)
     var shards = shardRouter.getShards();
+ //   console.log('In storeRouter GET - shards:',shards)
     var nodes = shards[shardId]
+ //   console.log('In storeRouter GET - nodes:',nodes)
     if(nodes.includes(process.env.SOCKET_ADDRESS)) { 
         const val = keyvalueStore[req.params.key];
         if (!val){
@@ -235,11 +239,10 @@ storeRouter.route('/:key')
             const REPLICA_HOST = node.split(':')[0];
             const port = node.split(':')[1];
 
-            const data = JSON.stringify({
-                "value": value,
-                "causal-metadata": causalMetadata,
-                "broadcast": true
-            });
+            // const data = JSON.stringify({
+            //     "value": value,
+            //     "causal-metadata": causalMetadata
+            // });
             const options = {
                 protocol: 'http:',
                 host: REPLICA_HOST,
@@ -249,23 +252,26 @@ storeRouter.route('/:key')
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Content-Length': data.length
+                    // 'Content-Length': data.length
                     }
             };
-            const req = http.request(options, function(res) {
-                console.log(res.statusCode);
+            const req = http.request(options, function(resForward) {
+                console.log(resForward.statusCode);
                 let body = '';
-                res.on('data', function (chunk) {
+                resForward.on('data', function (chunk) {
                     body += chunk;
                 });
-                res.on('end', function() {
+                resForward.on('end', function() {
                     console.log(body);
+                    res.json({
+                        body
+                    })
                 })
             });
             req.on('error', function(err) {
                 console.log("Error: Request failed at " + view);
             });
-            req.write(data);
+            // req.write(data);
             req.end();
 
         }
