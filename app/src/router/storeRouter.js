@@ -91,7 +91,7 @@ function getKVS(views, replace) {
                     });
                     res.on('end', function() {
                         console.log(body);
-                        if (replace) {
+                        if (!replace) {
                             setKVS(JSON.parse(body).kvs); // add kvs to current KVSs
                             setCM(JSON.parse(body).cm); // add cm to current cm  
                         } else {
@@ -220,6 +220,9 @@ storeRouter.route('/:key')
     const { value } = req.body;
     const causalMetadata = req.body['causal-metadata'];
 
+    console.log('should enter', causalMetadata)
+
+
     if (!req.body["value"]) {
         res.status(400).json({
             "error": "Value is missing",
@@ -239,9 +242,14 @@ storeRouter.route('/:key')
 
         var nodes = shards[shardId]
 
-        if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+        console.log('shardId: ', shardId)
+        console.log('shards: ', shards)
+        console.log('nodes: ', nodes)
 
+        if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+            console.log('should enter',causalMetadata)
             if(causalMetadata.length == 0) {
+                console.log('causal metadata is 0')
                 keyvalueStore[key] = value;
                 vectorClock[key] = [];
                 for(var i = 0; i < numViews; i++) {
@@ -261,6 +269,7 @@ storeRouter.route('/:key')
                     } else {
                         vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
                     }
+                    console.log('-------------------', CURRENT_REPLICA_HOST)
                     res.status(200).json({
                         "message": "Updated successfully",
                         "causal-metadata": vectorClock,
@@ -298,6 +307,7 @@ storeRouter.route('/:key')
                     } else {
                         vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
                     }
+                    console.log('-----------------', CURRENT_REPLICA_HOST)
                     res.status(200).json({
                         "message": "Updated successfully",
                         "causal-metadata": vectorClock,
@@ -322,7 +332,15 @@ storeRouter.route('/:key')
                 }
             }
 
+            if(!req.body['broadcast']) {
+                console.log('   i am broadcasting ---------------- ',CURRENT_REPLICA_HOST)
+                causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock, nodes);
+            }
+
         } else {
+
+            console.log('in else')
+            console.log('redirecting with data', causalMetadata)
 
             var node = nodes[0];
 
@@ -346,15 +364,20 @@ storeRouter.route('/:key')
                     }
             };
             const req = http.request(options, function(resForward) {
-                console.log(resForward.statusCode);
+                console.log('The http request status code is: ', resForward.statusCode);
+                var statusCode = resForward.statusCode
                 let body = '';
                 resForward.on('data', function (chunk) {
                     body += chunk;
                 });
                 resForward.on('end', function() {
-                    console.log(body);
-                    res.json({
-                        body
+                    console.log('Ending', body);
+                    //Fix here
+                    jsonForm = JSON.parse(body)                    
+                    res.status(statusCode).json({
+                        "message": jsonForm.message,
+                        "causal-metadata": jsonForm["causal-metadata"],
+                        "shard-id": jsonForm["shard-id"]
                     })
                 })
             });
@@ -365,9 +388,6 @@ storeRouter.route('/:key')
             req.end();
         }
 
-        if(!req.body['broadcast']) {
-            causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock, nodes);
-        }
     }
     
 })
@@ -472,6 +492,12 @@ async function causalBroadcast(CURRENT_REPLICA_HOST, key, value, causalMetadata,
     for(view of nodes) {
         const REPLICA_HOST = view.split(':')[0];
         if(REPLICA_HOST != CURRENT_REPLICA_HOST) {
+            console.log('CURRENT_REPLICA_HOST', CURRENT_REPLICA_HOST)
+            console.log('key', key)
+            console.log('value', value)
+            console.log('nodes', nodes)
+            console.log('view', view)
+            console.log('REPLICA_HOST', REPLICA_HOST)
             const port = view.split(':')[1];
             const data = JSON.stringify({
                 "value": value,
