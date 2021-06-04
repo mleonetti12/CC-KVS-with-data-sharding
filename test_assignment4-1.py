@@ -258,11 +258,11 @@ class TestHW4(unittest.TestCase):
             nodeIndex = counter % len(nodeIpList)
 
             # put a new key in the store
-            print('http://localhost:', nodeHostPortList[nodeIndex], '/key-value-store/key', str(counter))
+            #print('http://localhost:', nodeHostPortList[nodeIndex], '/key-value-store/key', str(counter))
             response = requests.put('http://localhost:' + nodeHostPortList[nodeIndex] + '/key-value-store/key' + str(counter), json={'value': "value" + str(counter), "causal-metadata": self.causalMetadata}, timeout=TIMEOUT)
             responseInJson = response.json()
-            print(responseInJson)
-            time.sleep(30)
+            #print(responseInJson)
+            #time.sleep(2)
             self.assertEqual(response.status_code, 201)
             self.causalMetadata = responseInJson["causal-metadata"]
 

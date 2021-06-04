@@ -583,8 +583,8 @@ function checkViews() {
 function pointwiseMaximum(localVectorClock, incomingVectorClock) {
     var newVectorClock = {};
     //TODO? Assuming incomingVectorClock always has more keys
-    console.log(localVectorClock);
-    console.log(incomingVectorClock);
+    console.log('local', localVectorClock);
+    console.log('incoming', incomingVectorClock);
     
     for(var key in incomingVectorClock) {
         if(!localVectorClock.hasOwnProperty(key)){
