@@ -97,51 +97,124 @@ shardRouter.route('/add-member/:shardId')
     }    
 });
 
+// update the shard of this node
+// for use with add-member
 shardRouter.route('/update/:shardId')
 .put(async (req, res, next) => {
     const id = req.params.shardId;
-    // thisShard = id.toString();
+    thisShard = id;
     shards = req.body["ss"];
     await storeRouter.getKVS(shards[id], true);
     res.status(200).send(); 
     
 });
 
-shardRouter.route('/sync-shard')
-.get(async (req, res) => {
-    res.status(200).json({"message": "Retrieved successfully", "ss": shards});
+// used to check if this node is holding the correct data
+// if not retrieved the kvs from another node in its shard
+// this is ran after kvs's have been resharded
+shardRouter.route('/check-update')
+.put(async (req, res, next) => {
+    shardNodes(viewRouter.getView(), req.body["shard-count"]); // assign nodes to shards
+    const KVS = storeRouter.retrieveKVS();
+    for (key in KVS) {
+        if (storeRouter.hashKey(key) != thisShard) {
+            await storeRouter.getKVS(shards[thisShard], true);
+            break;
+        }
+    }
+    res.status(200).send();    
 });
 
+// 
+// shardRouter.route('/sync-shard')
+// .get(async (req, res) => {
+//     res.status(200).json({"message": "Retrieved successfully", "ss": shards});
+// });
+
+// main reshard route called by admin
 shardRouter.route('/reshard')
 .put(async (req, res, next) => {
-    let shardCount = req.body["shard-count"];
-    if (viewRouter.getView() < shardCount * 2) {
+    let shardCount1 = req.body["shard-count"];
+    // not enough nodes to reshard with this value
+    if (viewRouter.getView() < shardCount1 * 2) {
         res.status(400).json({"message": "Not enough nodes to provide fault-tolerance with the given shard count!"});
     } else {
-        shardNodes(viewRouter.getView(), shardCount);
+        let prevShardCount = shardCount;
+        let promises = [];
+        storeRouter.setHashRing(shardCount1); // update hashring
+        for (view of viewRouter.getView()) {
+            // wait for every node to update its hashring before continuing
+            promises.push(promiseReq(view, 'PUT', '/key-value-store/update-hash', {"shard-count":shardCount1}));
+        }
+        Promise.allSettled(promises)
+        .then(reshard(prevShardCount, shardCount1)) // then reshard kvs
+        .then(shardNodes(viewRouter.getView(), shardCount1)) // then assign nodes to new shards
+        .catch((error) =>{
+            console.log(error);
+        }); 
+
+        // this node checks if it storing correct data
+        const KVS = storeRouter.retrieveKVS();
+        for (key in KVS) {
+            if (storeRouter.hashKey(key) != thisShard) {
+                await storeRouter.getKVS(shards[thisShard], true);
+                break;
+            }
+        }
+        // all nodes check if they are storing correct data
+        for (view of viewRouter.getView()) {
+            Req(view, 'PUT', '/key-value-store-shard/check-update', {"shard-count":shardCount1});
+        }
         res.status(200).json({"message": "Resharding done successfully"});
     }
 });
 
+// backend reshard function
+function reshard(prevShardCount, shardCount1) {
+    // calculate shards that need to be reviewed
+    const diff = shardCount1 - prevShardCount;
+    // if no change in #, do nothing
+    if (diff == 0) {
+        return;
+    } else if (diff > 0) { // if shards added
+        // run addition protocol
+        // loop through all nodes of shards that need reviewing
+        for (var i = prevShardCount; i < shardCount1; i++) {
+            for (node of shards[i.toString()]) {
+                // reshard the kvs of these nodes
+                Req(view, 'PUT', '/key-value-store/reshard', {"shard-count":shardCount1});
+            }
+        }
+    } else {
+        // run deletion protocol
+        for (var i = prevShardCount; i > shardCount1; i--) {
+            for (node of shards[i.toString()]) {
+                Req(view, 'PUT', '/key-value-store/reshard', {"shard-count":shardCount1});
+            }
+        }
+    }
+    
+}
+
 // only sets which nodes correspond to which shard, does not allocate data
 // split nodes into even sized paritions of length floor(nodes.length / shardCount)
 // first parition = (shardID = 1), ..., etc -> excess added to shard 1
-function shardNodes(nodes, shardCount) {
+function shardNodes(nodes, shardCount1) {
     nodes.sort();
     let prevInd = 0;
     let newShards = {};
     // partition nodes into shardCount chunks of size floor(nodes.length / shardCount)
     // first parition = (shardID = 1), ...
-    for (let i = 1; i <= shardCount; i++) {
+    for (let i = 1; i <= shardCount1; i++) {
         let nodeArr = [];
-        for (let j = prevInd; j < prevInd + Math.floor(nodes.length / shardCount); j++) {
+        for (let j = prevInd; j < prevInd + Math.floor(nodes.length / shardCount1); j++) {
             nodeArr.push(nodes[j]);
             if (nodes[j] == socketAddress) {
                 thisShard = i.toString();
             }
         }
         newShards[i] = nodeArr;
-        prevInd = prevInd + Math.floor(nodes.length / shardCount);
+        prevInd = prevInd + Math.floor(nodes.length / shardCount1);
     }
     // add remaining nodes to the first shard
     for (let i = prevInd; i < nodes.length; i++) {
@@ -150,8 +223,10 @@ function shardNodes(nodes, shardCount) {
     shards = newShards;
     // call function to reshard this nodes data somewhere in here
     // need to send excess data to other nodes
+    // maybe put reshard here
 }
 
+// basic http request shell with no promise
 function Req(view, method, path, dat) {
     // return new Promise(function(resolve, reject) {
         if (view != process.env.SOCKET_ADDRESS) {
@@ -189,6 +264,46 @@ function Req(view, method, path, dat) {
     // })
 }
 
+// same function as above but with promise
+// for use in waiting for req to finish
+function promiseReq(view, method, path, dat) {
+    return new Promise(function(resolve, reject) {
+        if (view != process.env.SOCKET_ADDRESS) {
+            const params = view.split(':');
+            const data = JSON.stringify(dat);
+            const options = {
+                protocol: 'http:',
+                host: params[0],
+                port: params[1],
+                path: path,
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': data.length
+                }
+            };
+            const req = http.request(options, function(res) {
+                console.log(res.statusCode);
+                let body = '';
+                res.on('data', function (chunk) {
+                    body += chunk;
+                });
+                res.on('end', function() {
+                    // console.log(body);
+                    resolve();
+                })
+            });
+            req.on('error', function(err) {
+                console.log("Error: Could not connect to replica at " + view);
+                reject();
+            });
+            req.write(data);
+            req.end();
+        }   
+    })
+}
+
+// basic get shell with promise
 function Get(views, path) {
     return new Promise(function(resolve, reject) {
         for (var view of views) {
@@ -227,8 +342,4 @@ function Get(views, path) {
         }
     })
 }
-
-
-
-
 

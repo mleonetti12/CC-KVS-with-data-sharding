@@ -3,6 +3,7 @@ const storeRouter = express.Router();
 storeRouter.use(express.json());
 const http = require('http');
 
+
 const keyvalueStore = {};
 var vectorClock = {};
 const OFFSET = 2;
@@ -13,11 +14,25 @@ var HashRing = require('hashring');
 var views = process.env.VIEW.split(',');  //10.0.0.2:8085, 10.0.0.3:8085, 10.0.0.4:8085
 var numViews = views.length;
 
-let tempRing = [];
-for (var i=1; i<= process.env.SHARD_COUNT; i++) {
-    tempRing.push(i.toString());
+let ring = setHashRing(process.env.SHARD_COUNT);
+
+// set the consistent hashing hashring based on shardCount
+function setHashRing(shardCount) {
+    let tempRing = [];
+    for (var i=1; i<= shardCount; i++) {
+        tempRing.push(i.toString());
+    }
+    let ring = new HashRing(tempRing, 'md5',
+        {
+            'replicas': 1
+        });
+    return ring;
 }
-var ring = new HashRing(tempRing, 'md5');
+
+// return the hash of a key
+function hashKey(key) {
+    return ring.get(key);
+}
 
 
 // add newKVS to current KVS, only for inter-view use
@@ -37,37 +52,33 @@ function setKVS(newKVS) {
     }
 }
 
+// replace the KVS with newKVS
 function replaceKVS(newKVS) {
     keyValueStore = newKVS;
 }
 
+// retrieve the KVS
+function retrieveKVS() {
+    return keyvalueStore;
+}
+
+// replace causal metadata for new
 function replaceCM(newCM) {
     causalMetadata = newCM;
 }
 
+// get length of KVS for shard-id-key-count
 function getLength() {
     return (Object.keys(keyvalueStore)).length;
 }
 
 // add new causal metadata to current
 function setCM(newCM) {
-    // for (var key in newCM) {
-    //     let updateFlag = true;
-    //     if (vectorClock.hasOwnProperty(key)) {
-    //        for(var index = 0; index < newCM[key].length; index++) {
-    //             if (newCM[key][index] < vectorClock[key][index]) {
-    //                 updateFlag = false;
-    //             }
-    //         }     
-    //     }
-    //     if (updateFlag) {
-    //         vectorClock[key] = newCM[key];
-    //     }   
-    // }
     vectorClock = pointwiseMaximum(vectorClock, newCM);
 }
 
 // get kvs from another replica and merge it with current kvs
+// or replace, depending on replace param
 function getKVS(views, replace) {
     return new Promise(function(resolve, reject) {
         for (var view of views) {
@@ -91,7 +102,7 @@ function getKVS(views, replace) {
                     });
                     res.on('end', function() {
                         console.log(body);
-                        if (replace) {
+                        if (!replace) {
                             setKVS(JSON.parse(body).kvs); // add kvs to current KVSs
                             setCM(JSON.parse(body).cm); // add cm to current cm  
                         } else {
@@ -118,6 +129,7 @@ function getKVS(views, replace) {
     })
 }
 
+
 // need to export setKVS function for index.js use
 // (storeRouter in index.js) -> storeRouter.router
 module.exports = {
@@ -127,7 +139,10 @@ module.exports = {
     getKVS:getKVS,
     replaceKVS:replaceKVS,
     replaceCM:replaceCM,
-    getLength:getLength
+    getLength:getLength,
+    retrieveKVS:retrieveKVS,
+    setHashRing:setHashRing,
+    hashKey:hashKey
 };
 
 const shardRouter = require("./shardRouter.js")
@@ -144,6 +159,43 @@ storeRouter.route('/')
 storeRouter.route('/sync-kvs')
 .get(async (req, res) => {
     res.status(200).json({"message": "Retrieved successfully", "kvs": keyvalueStore, "cm": vectorClock});
+});
+
+// shard store only route for resharding
+storeRouter.route('/reshard')
+.put(async (req, res) => {
+    // intialize json object with empty kvs for each shard
+    let keysToSend = {};
+    for (shard in shardRouter.getShards()) {
+        keysToSend[shard] = {};
+    }
+    // loop through this kvs, hash each key
+    // then place into temp kvs for correct shard
+    for (key in keyvalueStore) {
+        let newShard = hashKey(key);
+        keysToSend[newShard][key] = keyvalueStore[key];
+    }
+    // for every shard, send temp kvs for update
+    for (shard in keysToSend) {
+        for (node of shardRouter.getShards()[shard]) {
+            // send keysToSend[shard] to this node
+            Req(node, 'PUT', '/key-value-store/put-keys', {"KVS":keysToSend[shard]});
+        }
+    }
+});
+
+// update kvs en masse for resharding
+storeRouter.route('/put-keys')
+.put(async (req, res) => {
+    setKVS(req.body["KVS"]);
+    res.status(200).send();
+});
+
+// update hashrin based on new shard count
+storeRouter.route('/update-hash')
+.put(async (req, res) => {
+    ring = setHashRing(req.body["shard-count"]);
+    res.status(200).send();
 });
 
 storeRouter.route('/:key')
@@ -200,10 +252,12 @@ storeRouter.route('/:key')
                 vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
                 res.status(201).json({
                     "message": "Added successfully",
-                    "causal-metadata": vectorClock
+                    "causal-metadata": vectorClock,
+                    "shard-id": shardId
                 });
             } else if(await compareVectorClocks(causalMetadata)) {
                 if(keyvalueStore.hasOwnProperty(key)) {
+                    console.log("in put 1");
                     keyvalueStore[key] = value;
                     if(req.body['broadcast']) {
                         vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
@@ -212,7 +266,8 @@ storeRouter.route('/:key')
                     }
                     res.status(200).json({
                         "message": "Updated successfully",
-                        "causal-metadata": vectorClock
+                        "causal-metadata": vectorClock,
+                        "shard-id": shardId
                     });
                 } else {
                     keyvalueStore[key] = value;
@@ -227,7 +282,8 @@ storeRouter.route('/:key')
                     }
                     res.status(201).json({
                         "message": "Added successfully",
-                        "causal-metadata": vectorClock
+                        "causal-metadata": vectorClock,
+                        "shard-id": shardId
                     });
                 }
             } else {
@@ -239,6 +295,7 @@ storeRouter.route('/:key')
                 console.log('in else');
 
                 if(keyvalueStore.hasOwnProperty(key)) {
+                    console.log("in put 2");
                     keyvalueStore[key] = value;
                     if(req.body['broadcast']) {
                         vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
@@ -247,7 +304,8 @@ storeRouter.route('/:key')
                     }
                     res.status(200).json({
                         "message": "Updated successfully",
-                        "causal-metadata": vectorClock
+                        "causal-metadata": vectorClock,
+                        "shard-id": shardId
                     });
                 } else {
                     keyvalueStore[key] = value;
@@ -262,7 +320,8 @@ storeRouter.route('/:key')
                     }
                     res.status(201).json({
                         "message": "Added successfully",
-                        "causal-metadata": vectorClock
+                        "causal-metadata": vectorClock,
+                        "shard-id": shardId
                     });
                 }
             }
@@ -276,8 +335,7 @@ storeRouter.route('/:key')
 
             const data = JSON.stringify({
                 "value": value,
-                "causal-metadata": causalMetadata,
-                "broadcast": true
+                "causal-metadata": causalMetadata
             });
             const options = {
                 protocol: 'http:',
@@ -291,14 +349,17 @@ storeRouter.route('/:key')
                     'Content-Length': data.length
                     }
             };
-            const req = http.request(options, function(res) {
-                console.log(res.statusCode);
+            const req = http.request(options, function(resForward) {
+                console.log(resForward.statusCode);
                 let body = '';
-                res.on('data', function (chunk) {
+                resForward.on('data', function (chunk) {
                     body += chunk;
                 });
-                res.on('end', function() {
+                resForward.on('end', function() {
                     console.log(body);
+                    res.json({
+                        body
+                    })
                 })
             });
             req.on('error', function(err) {
@@ -306,7 +367,6 @@ storeRouter.route('/:key')
             });
             req.write(data);
             req.end();
-    
         }
 
         if(!req.body['broadcast']) {
@@ -464,3 +524,40 @@ function pointwiseMaximum(localVectorClock, incomingVectorClock) {
     return newVectorClock;
 }
 
+// http request shell fcn, same as in shardRouter
+function Req(view, method, path, dat) {
+    // return new Promise(function(resolve, reject) {
+        if (view != process.env.SOCKET_ADDRESS) {
+            const params = view.split(':');
+            const data = JSON.stringify(dat);
+            const options = {
+                protocol: 'http:',
+                host: params[0],
+                port: params[1],
+                path: path,
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': data.length
+                }
+            };
+            const req = http.request(options, function(res) {
+                console.log(res.statusCode);
+                let body = '';
+                res.on('data', function (chunk) {
+                    body += chunk;
+                });
+                res.on('end', function() {
+                    console.log(body);
+                    // resolve();
+                })
+            });
+            req.on('error', function(err) {
+                console.log("Error: Could not connect to replica at " + view);
+                // reject();
+            });
+            req.write(data);
+            req.end();
+        }   
+    // })
+}
