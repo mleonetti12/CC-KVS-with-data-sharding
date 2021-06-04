@@ -39,14 +39,14 @@ storeRouter.route('/sync-kvs')
 
 storeRouter.route('/:key')
 .get(async (req, res) => {
-    const val = keyvalueStore[req.params.key];
 
-    var hashedKey = ring.hash(key);
-    var shardId = ring.get(hashedKey);
+  //  var hashedKey = ring.hash(key);
+    var shardId = ring.get(key);
 
     var shards = shardRouter.getShards();
     var nodes = shards[shardId]
     if(nodes.includes(process.env.SOCKET_ADDRESS)) { 
+        const val = keyvalueStore[req.params.key];
         if (!val){
             res.status(404).json({"error": "Key does not exist", "message": "Error in GET"});
         } else {
@@ -260,17 +260,17 @@ storeRouter.route('/:key')
     const CURRENT_REPLICA_HOST = REPLICA.split(':')[0];  
     const causalMetadata = req.body['causal-metadata']
     const key = req.params.key
-    const val = keyvalueStore[key];
 
     //Delete key value store
-     var hashedKey = ring.hash(key)
-        var shardId = ring.get(hashedKey);
+   //  var hashedKey = ring.hash(key)
+        var shardId = ring.get(key);
 
         var shards = shardRouter.getShards();
 
         var nodes = shards[shardId]
 
     if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+        const val = keyvalueStore[key];
         if (!val){
             res.status(404).json({"error": "Key does not exist", "message": "Error in DELETE"});
         } else {
@@ -289,48 +289,53 @@ storeRouter.route('/:key')
         }
     }
     else{
-        var node = nodes[0];
+        let body = await forward_delete(nodes);
 
-            const REPLICA_HOST = node.split(':')[0];
-            const port = node.split(':')[1];
-
-            const data = JSON.stringify({
-                "value": value,
-                "causal-metadata": causalMetadata,
-                "broadcast": true
-            });
-            const options = {
-                protocol: 'http:',
-                host: REPLICA_HOST,
-                port: port,
-                //params: 
-                path: `/key-value-store/${key}`,
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': data.length
-                    }
-            };
-            const req = http.request(options, function(res) {
-                console.log(res.statusCode);
-                let body = '';
-                res.on('data', function (chunk) {
-                    body += chunk;
-                });
-                res.on('end', function() {
-                    console.log(body);
-                })
-            });
-            req.on('error', function(err) {
-                console.log("Error: Request failed at " + view);
-            });
-            req.write(data);
-            req.end();
     }
 })
 .all(async(req,res,next) => {
     res.status(405).send();
 });
+
+function forward_delete(nodes){
+        var node = nodes[0];
+        const REPLICA_HOST = node.split(':')[0];
+        const port = node.split(':')[1];
+
+        const data = JSON.stringify({
+            "value": value,
+            "causal-metadata": causalMetadata,
+            "broadcast": true
+        });
+        const options = {
+            protocol: 'http:',
+            host: REPLICA_HOST,
+            port: port,
+            //params: 
+            path: `/key-value-store/${key}`,
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': data.length
+                }
+        };
+        const req = http.request(options, function(res) {
+            console.log(res.statusCode);
+            let body = '';
+            res.on('data', function (chunk) {
+                body += chunk;
+            });
+            res.on('end', function() {
+                console.log(body);
+            })
+        });
+        req.on('error', function(err) {
+            console.log("Error: Request failed at " + view);
+        });
+        req.write(data);
+        req.end();
+}
+
 async function compareVectorClocks(metadataVC) {
 
     for(var key in vectorClock) {
