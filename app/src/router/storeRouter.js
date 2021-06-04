@@ -132,8 +132,6 @@ module.exports = {
     getLength:getLength
 };
 
-const shardRouter = require("./shardRouter.js")
-
 storeRouter.route('/')
 .all((req, res, next) => {
     res.status(405).json({
