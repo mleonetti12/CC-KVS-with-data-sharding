@@ -213,6 +213,8 @@ storeRouter.route('/update-hash')
 storeRouter.route('/:key')
 .get(async (req, res) => {
 
+    const { key } = req.params;
+
    // console.log('In storeRouter GET - key:',key)
     var hashedKey = ring.hash(key);
   //  console.log('In storeRouter GET - hashedKey:',hashedKey)
@@ -223,7 +225,7 @@ storeRouter.route('/:key')
     var nodes = shards[shardId]
  //   console.log('In storeRouter GET - nodes:',nodes)
     if(nodes.includes(process.env.SOCKET_ADDRESS)) { 
-        const val = keyvalueStore[req.params.key];
+        const val = keyvalueStore[key];
         if (!val){
             res.status(404).json({"error": "Key does not exist", "message": "Error in GET"});
         } else {
@@ -257,14 +259,18 @@ storeRouter.route('/:key')
             };
             const req = http.request(options, function(resForward) {
                 console.log(resForward.statusCode);
+                var statusCode = resForward.statusCode;
                 let body = '';
                 resForward.on('data', function (chunk) {
                     body += chunk;
                 });
                 resForward.on('end', function() {
                     console.log(body);
-                    res.json({
-                        body
+                    jsonForm = JSON.parse(body)                    
+                    res.status(statusCode).json({
+                        "message": jsonForm.message,
+                        "causal-metadata": jsonForm["causal-metadata"],
+                        "value": jsonForm["value"]
                     })
                 })
             });
