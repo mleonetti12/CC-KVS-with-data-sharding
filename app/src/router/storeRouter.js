@@ -144,21 +144,70 @@ storeRouter.route('/')
 // view-only route for ease in updating KVS
 storeRouter.route('/sync-kvs')
 .get(async (req, res) => {
+
     res.status(200).json({"message": "Retrieved successfully", "kvs": keyvalueStore, "cm": vectorClock});
 });
 
 storeRouter.route('/:key')
 .get(async (req, res) => {
-    const val = keyvalueStore[req.params.key];
-    if (!val){
-        res.status(404).json({"error": "Key does not exist", "message": "Error in GET"});
-    } else {
-        //vectorClock[req.params.key][]+=1 
-        res.status(200).json({"message": "Retrieved successfully", 
-                             "causal-metadata":vectorClock,
-                             "value": val});
+
+  //  var hashedKey = ring.hash(key);
+    var shardId = ring.get(key);
+
+    var shards = shardRouter.getShards();
+    var nodes = shards[shardId]
+    if(nodes.includes(process.env.SOCKET_ADDRESS)) { 
+        const val = keyvalueStore[req.params.key];
+        if (!val){
+            res.status(404).json({"error": "Key does not exist", "message": "Error in GET"});
+        } else {
+            //vectorClock[req.params.key][]+=1 
+                res.status(200).json({"message": "Retrieved successfully", 
+                                     "causal-metadata":vectorClock,
+                                     "value": val});
+            }
     }
-})
+    else{
+            var node = nodes[0];
+
+            const REPLICA_HOST = node.split(':')[0];
+            const port = node.split(':')[1];
+
+            const data = JSON.stringify({
+                "value": value,
+                "causal-metadata": causalMetadata,
+                "broadcast": true
+            });
+            const options = {
+                protocol: 'http:',
+                host: REPLICA_HOST,
+                port: port,
+                //params: 
+                path: `/key-value-store/${key}`,
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': data.length
+                    }
+            };
+            const req = http.request(options, function(res) {
+                console.log(res.statusCode);
+                let body = '';
+                res.on('data', function (chunk) {
+                    body += chunk;
+                });
+                res.on('end', function() {
+                    console.log(body);
+                })
+            });
+            req.on('error', function(err) {
+                console.log("Error: Request failed at " + view);
+            });
+            req.write(data);
+            req.end();
+
+        }
+    })
 .put(async (req, res, next) => {
 
     checkViews();
@@ -328,28 +377,82 @@ storeRouter.route('/:key')
     const CURRENT_REPLICA_HOST = REPLICA.split(':')[0];  
     const causalMetadata = req.body['causal-metadata']
     const key = req.params.key
-    const val = keyvalueStore[key];
 
     //Delete key value store
-    if (!val){
-        res.status(404).json({"error": "Key does not exist", "message": "Error in DELETE"});
-    } else {
-        if(await compareVectorClocks(causalMetadata)){
-            delete keyvalueStore[key];
-            //creates causal metadata and increment 1 for current replica since it's a write operation
-            deleteCausalBroadcast(CURRENT_REPLICA_HOST, key,causalMetadata)
-            vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
-            //broadcast to all other replicas
-            res.status(200).json({"message":"Deleted successfully","causal-metadata":vectorClock});
+   //  var hashedKey = ring.hash(key)
+        var shardId = ring.get(key);
 
-        }else{
-            res.status(404).json({"error": "Inconsistent causality", "message": "All causally preceding operations must be complete first before applying DELETE"});
+        var shards = shardRouter.getShards();
+
+        var nodes = shards[shardId]
+
+    if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+        const val = keyvalueStore[key];
+        if (!val){
+            res.status(404).json({"error": "Key does not exist", "message": "Error in DELETE"});
+        } else {
+
+            if(await compareVectorClocks(causalMetadata)){
+                delete keyvalueStore[key];
+                //creates causal metadata and increment 1 for current replica since it's a write operation
+                deleteCausalBroadcast(CURRENT_REPLICA_HOST, key,causalMetadata)
+                vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
+                //broadcast to all other replicas
+                res.status(200).json({"message":"Deleted successfully","causal-metadata":vectorClock,"shard-id":shardId});
+
+            }else{
+                res.status(404).json({"error": "Inconsistent causality", "message": "All causally preceding operations must be complete first before applying DELETE"});
+            }
         }
+    }
+    else{
+        let body = await forward_delete(nodes);
+
     }
 })
 .all(async(req,res,next) => {
     res.status(405).send();
 });
+
+function forward_delete(nodes){
+        var node = nodes[0];
+        const REPLICA_HOST = node.split(':')[0];
+        const port = node.split(':')[1];
+
+        const data = JSON.stringify({
+            "value": value,
+            "causal-metadata": causalMetadata,
+            "broadcast": true
+        });
+        const options = {
+            protocol: 'http:',
+            host: REPLICA_HOST,
+            port: port,
+            //params: 
+            path: `/key-value-store/${key}`,
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': data.length
+                }
+        };
+        const req = http.request(options, function(res) {
+            console.log(res.statusCode);
+            let body = '';
+            res.on('data', function (chunk) {
+                body += chunk;
+            });
+            res.on('end', function() {
+                console.log(body);
+            })
+        });
+        req.on('error', function(err) {
+            console.log("Error: Request failed at " + view);
+        });
+        req.write(data);
+        req.end();
+}
+
 async function compareVectorClocks(metadataVC) {
 
     for(var key in vectorClock) {
