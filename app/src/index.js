@@ -24,7 +24,7 @@ for (view of views) {
 	promises.push(broadcastReq(view, process.env.SOCKET_ADDRESS, 'PUT'));
 }
 Promise.allSettled(promises)
-	.then(storeRouter.getKVS(views))
+	.then(storeRouter.getKVS(views, false))
 	.then(app.listen(8085, splitAdd[0], function(){
 		startGossip();
 	}))
