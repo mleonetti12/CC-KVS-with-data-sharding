@@ -166,20 +166,29 @@ storeRouter.route('/reshard')
 .put(async (req, res) => {
     // intialize json object with empty kvs for each shard
     let keysToSend = {};
+    let cmToSend = {};
     for (shard in shardRouter.getShards()) {
         keysToSend[shard] = {};
+        cmToSend[shard] = {};
     }
     // loop through this kvs, hash each key
     // then place into temp kvs for correct shard
     for (key in keyvalueStore) {
         let newShard = hashKey(key);
-        keysToSend[newShard][key] = keyvalueStore[key];
+        if (shardRouter.getThisShard() != newShard) {
+            keysToSend[newShard][key] = keyvalueStore[key];
+            delete keyvalueStore[key];
+            if (vectorClock.hasOwnProperty(key)) {
+                cmToSend[newShard][key] = vectorClock[key];
+                delete vectorClock[key];
+            }
+        }
     }
     // for every shard, send temp kvs for update
     for (shard in keysToSend) {
         for (node of shardRouter.getShards()[shard]) {
             // send keysToSend[shard] to this node
-            Req(node, 'PUT', '/key-value-store/put-keys', {"KVS":keysToSend[shard]});
+            Req(node, 'PUT', '/key-value-store/put-keys', {"KVS":keysToSend[shard], "CM":cmToSend[shard]});
         }
     }
 });
@@ -188,6 +197,7 @@ storeRouter.route('/reshard')
 storeRouter.route('/put-keys')
 .put(async (req, res) => {
     setKVS(req.body["KVS"]);
+    setCM(req.body["CM"]);
     res.status(200).send();
 });
 
