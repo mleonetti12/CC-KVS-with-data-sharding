@@ -3,8 +3,6 @@ const storeRouter = express.Router();
 storeRouter.use(express.json());
 const http = require('http');
 
-const shardRouter = require("./shardRouter.js")
-
 const keyvalueStore = {};
 var vectorClock = {};
 const OFFSET = 2;
@@ -131,6 +129,9 @@ module.exports = {
     replaceCM:replaceCM,
     getLength:getLength
 };
+
+// Require it here to avoid circular dependency
+const shardRouter = require("./shardRouter.js")
 
 storeRouter.route('/')
 .all((req, res, next) => {
