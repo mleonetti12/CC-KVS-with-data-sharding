@@ -201,7 +201,8 @@ storeRouter.route('/:key')
                 vectorClock[key][VECTOR_CLOCK_INDEX] = 1;
                 res.status(201).json({
                     "message": "Added successfully",
-                    "causal-metadata": vectorClock
+                    "causal-metadata": vectorClock,
+                    "shard-id": shardId
                 });
             } else if(await compareVectorClocks(causalMetadata)) {
                 if(keyvalueStore.hasOwnProperty(key)) {
@@ -213,7 +214,8 @@ storeRouter.route('/:key')
                     }
                     res.status(200).json({
                         "message": "Updated successfully",
-                        "causal-metadata": vectorClock
+                        "causal-metadata": vectorClock,
+                        "shard-id": shardId
                     });
                 } else {
                     keyvalueStore[key] = value;
@@ -228,7 +230,8 @@ storeRouter.route('/:key')
                     }
                     res.status(201).json({
                         "message": "Added successfully",
-                        "causal-metadata": vectorClock
+                        "causal-metadata": vectorClock,
+                        "shard-id": shardId
                     });
                 }
             } else {
@@ -248,7 +251,8 @@ storeRouter.route('/:key')
                     }
                     res.status(200).json({
                         "message": "Updated successfully",
-                        "causal-metadata": vectorClock
+                        "causal-metadata": vectorClock,
+                        "shard-id": shardId
                     });
                 } else {
                     keyvalueStore[key] = value;
@@ -263,7 +267,8 @@ storeRouter.route('/:key')
                     }
                     res.status(201).json({
                         "message": "Added successfully",
-                        "causal-metadata": vectorClock
+                        "causal-metadata": vectorClock,
+                        "shard-id": shardId
                     });
                 }
             }
@@ -312,7 +317,7 @@ storeRouter.route('/:key')
         }
 
         if(!req.body['broadcast']) {
-            causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock);
+            causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock, nodes);
         }
     }
     
@@ -360,8 +365,8 @@ async function compareVectorClocks(metadataVC) {
 }
 
 
-async function causalBroadcast(CURRENT_REPLICA_HOST, key, value, causalMetadata) {
-    for(view of views) {
+async function causalBroadcast(CURRENT_REPLICA_HOST, key, value, causalMetadata, nodes) {
+    for(view of nodes) {
         const REPLICA_HOST = view.split(':')[0];
         if(REPLICA_HOST != CURRENT_REPLICA_HOST) {
             const port = view.split(':')[1];
