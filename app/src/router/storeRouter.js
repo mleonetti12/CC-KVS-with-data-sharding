@@ -198,8 +198,10 @@ storeRouter.route('/reshard')
 // update kvs en masse for resharding
 storeRouter.route('/put-keys')
 .put(async (req, res) => {
-    setKVS(req.body["KVS"]);
+    console.log("kvs size sent" + Object.keys(req.body["KVS"]).length);
     setCM(req.body["CM"]);
+    setKVS(req.body["KVS"]);
+    console.log("total kvs size after sent" + Object.keys(keyvalueStore).length);
     res.status(200).send();
 });
 
