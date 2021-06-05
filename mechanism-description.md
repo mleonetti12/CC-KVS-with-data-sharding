@@ -17,7 +17,8 @@ The Causal Dependency Mechanism is implemented by using the Vector Clock Algorit
 The Vector Clocks are all stored in vectorClock = {} java's object data structure with each key as key, and the key's value as an array with length of the number of replicas. Therefore if we have two keys and 3 replicas the vectorClock could look like:
 vectorClock = {'x':[0,0,0],'y':[0,0,0]} 
 
-For GET requests, there isn't any causal metadata being passed into the GET request. If the key that the request is asking for isn't present, then it will simply return "key doesn't exist". No update to the replica's vector clock and no broadcasting is necessary since it's not a 'write' action, so there's no change in causal consistency. 
+For GET requests, the causal metadata tracking was simpler. If the key that the request is asking for isn't present, then it will simply return "key doesn't exist". If they key does exist it will return a message, the causal metadata, and the value for the corresponding key.  If a node receives a GET request for key, it must first find out the shard ID. If it is the same as its shard ID, it responds to the client. Otherwise, it forwards the GET requestto one of the members of<shard-id>. The node receiving the forwarded GET request recalculates the shardID of<key>to ensure that it has received the correct request. Afterwards, it responds to the forwarding node,which in turn replies back to the client.
+No update to the replica's vector clock and no broadcasting is necessary since it's not a 'write' action, so there's no change in causal consistency. 
 
 Both DELETE and PUT functions require helper functions such as causalBroadcast(), deleteCausalBroadcast(), pointWiseMaximum() and compareVectorClocks()
 to maintain their causal consistency/broadcasting.
