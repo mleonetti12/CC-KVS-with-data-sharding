@@ -57,3 +57,9 @@ A clear possible false positive case is where a replica is up, but fails to resp
 
 
 # Sharding Keys across Nodes
+
+- 1 Assigning nodes to shards
+- Assigning keys to shards
+- Resharding mechanism
+
+
