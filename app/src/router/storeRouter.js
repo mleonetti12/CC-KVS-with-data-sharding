@@ -296,7 +296,7 @@ storeRouter.route('/:key')
     const { value } = req.body;
     const causalMetadata = req.body['causal-metadata'];
 
-    console.log('should enter', causalMetadata)
+    // console.log('should enter', causalMetadata)
 
 
     if (!req.body["value"]) {
@@ -318,9 +318,9 @@ storeRouter.route('/:key')
 
         var nodes = shards[shardId]
 
-        console.log('shardId: ', shardId)
-        console.log('shards: ', shards)
-        console.log('nodes: ', nodes)
+        // console.log('shardId: ', shardId)
+        // console.log('shards: ', shards)
+        // console.log('nodes: ', nodes)
 
         if(nodes.includes(process.env.SOCKET_ADDRESS)) {
             console.log('should enter',causalMetadata)
@@ -339,14 +339,12 @@ storeRouter.route('/:key')
                 });
             } else if(await compareVectorClocks(causalMetadata)) {
                 if(keyvalueStore.hasOwnProperty(key)) {
-                    console.log("in put 1");
                     keyvalueStore[key] = value;
                     if(req.body['broadcast']) {
                         vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
                     } else {
                         vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
                     }
-                    console.log('-------------------', CURRENT_REPLICA_HOST)
                     res.status(200).json({
                         "message": "Updated successfully",
                         "causal-metadata": vectorClock,
@@ -375,17 +373,14 @@ storeRouter.route('/:key')
                 while(!await compareVectorClocks(causalMetadata)) { // while causal metadata is out of date
                     await getKVS(process.env.VIEW.split(','));
                 }
-                console.log('in else');
 
                 if(keyvalueStore.hasOwnProperty(key)) {
-                    console.log("in put 2");
                     keyvalueStore[key] = value;
                     if(req.body['broadcast']) {
                         vectorClock = pointwiseMaximum(vectorClock, causalMetadata);
                     } else {
                         vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
                     }
-                    console.log('-----------------', CURRENT_REPLICA_HOST)
                     res.status(200).json({
                         "message": "Updated successfully",
                         "causal-metadata": vectorClock,
@@ -411,14 +406,10 @@ storeRouter.route('/:key')
             }
 
             if(!req.body['broadcast']) {
-                console.log('   i am broadcasting ---------------- ',CURRENT_REPLICA_HOST)
                 causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock, nodes);
             }
 
         } else {
-
-            console.log('in else')
-            console.log('redirecting with data', causalMetadata)
 
             var node = nodes[0];
 
@@ -535,7 +526,6 @@ function forward_delete(nodes){
                 }
         };
         const req = http.request(options, function(res) {
-            console.log(res.statusCode);
             let body = '';
             res.on('data', function (chunk) {
                 body += chunk;
@@ -570,12 +560,6 @@ async function causalBroadcast(CURRENT_REPLICA_HOST, key, value, causalMetadata,
     for(view of nodes) {
         const REPLICA_HOST = view.split(':')[0];
         if(REPLICA_HOST != CURRENT_REPLICA_HOST) {
-            console.log('CURRENT_REPLICA_HOST', CURRENT_REPLICA_HOST)
-            console.log('key', key)
-            console.log('value', value)
-            console.log('nodes', nodes)
-            console.log('view', view)
-            console.log('REPLICA_HOST', REPLICA_HOST)
             const port = view.split(':')[1];
             const data = JSON.stringify({
                 "value": value,
@@ -595,7 +579,6 @@ async function causalBroadcast(CURRENT_REPLICA_HOST, key, value, causalMetadata,
                   }
             };
             const req = http.request(options, function(res) {
-                console.log(res.statusCode);
                 let body = '';
                 res.on('data', function (chunk) {
                     body += chunk;
@@ -661,8 +644,8 @@ function checkViews() {
 function pointwiseMaximum(localVectorClock, incomingVectorClock) {
     var newVectorClock = {};
     //TODO? Assuming incomingVectorClock always has more keys
-    console.log('local', localVectorClock);
-    console.log('incoming', incomingVectorClock);
+    // console.log('local', localVectorClock);
+    // console.log('incoming', incomingVectorClock);
     
     for(var key in incomingVectorClock) {
         if(!localVectorClock.hasOwnProperty(key)){
@@ -674,7 +657,7 @@ function pointwiseMaximum(localVectorClock, incomingVectorClock) {
             }
         }
     }
-    console.log(newVectorClock)
+    // console.log(newVectorClock)
     return newVectorClock;
 }
 

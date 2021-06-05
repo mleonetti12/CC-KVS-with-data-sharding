@@ -32,3 +32,9 @@ Ming Jeng
 - storeRouter.js
 - the GET Operation
 - the DELETE Operation
+
+Ronald Chhua
+- storeRouter.js
+ - PUT & GET request
+ - Request Forwarding to Shard
+ - Hashring, causal broadcast

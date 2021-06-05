@@ -14,7 +14,7 @@ To compare the local vector clock (indicating what operations have been done on 
 
 The Causal Dependency Mechanism is implemented by using the Vector Clock Algorithm, specifically having each Key it's own Vector Clock. The reason for doing that is because each key is causally independent from each other, so each key must have its own Vector Clock to maintain this independence. This mechanism is implemented in the file storeRouter.js 
 
-The Vector Clocks are all stored in vectorClock = {} java's object data structure with each key as key, and the key's value as an array with length of the number of replicas. Therefore if we have two keys and 3 replicas the vectorClock could look like:
+The Vector Clocks are all stored in vectorClock = {} javascript's object data structure with each key as key, and the key's value as an array with length of the number of replicas. Therefore if we have two keys and 3 replicas the vectorClock could look like:
 vectorClock = {'x':[0,0,0],'y':[0,0,0]} 
 
 For GET requests, the causal metadata tracking was simpler. If the key that the request is asking for isn't present, then it will simply return "key doesn't exist". If they key does exist it will return a message, the causal metadata, and the value for the corresponding key.  
@@ -23,6 +23,8 @@ No update to the replica's vector clock and no broadcasting is necessary since i
 Both DELETE and PUT functions require helper functions such as causalBroadcast(), deleteCausalBroadcast(), pointWiseMaximum() and compareVectorClocks()
 to maintain their causal consistency/broadcasting.
 
+VectorClocks/causal-metadata get updated when a request is made to some node and if the local node's VC is "outdated" i.e. different then the pointWiseMaximum() function gets called and we essentially take the maximum of each index for the key that is sent through the request. This approach was based off of the modified vector clock algorithm shown in lecture.
+Most often they are updated during a PUT/DELETE request, where we increment the index of the key's value array.
 
 # Detecting when a node is down
 
