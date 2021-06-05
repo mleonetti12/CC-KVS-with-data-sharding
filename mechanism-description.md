@@ -72,7 +72,7 @@ Assigning nodes to shards in a consistent manner was done through parsing of an 
 
 Assigning keys to shards was done via consistent hashing. We utilized a hashring() object, which functions to 
 automatically assign both nodes (shards and keys) into slots in the ring
-- ADD PUT/GET/DELETE METHODOLOGY HERE
+- ADD PUT/DELETE Methodology here together since same algorithm
 - GET Requests: The node that recieves a GET request must for check if the shard ID of the request is equal to its (the node's) shard ID. If it is the same, it will respond back with a successful message, causal metadata, and the correct value. Otherwise, it will have to forward the GET request to any member of the shard-id, in our case we made it forward to the member of the first index in the array of nodes that's under the shard-id. (line 241: nodes[0]) That node which recieved the forwarded GET request will have to re-check if the ShardID of the key is correct and then will respond accordingly back to the forwarding node, which will respond back to the client. 
 
 
