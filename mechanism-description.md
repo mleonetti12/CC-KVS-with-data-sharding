@@ -17,7 +17,7 @@ The Causal Dependency Mechanism is implemented by using the Vector Clock Algorit
 The Vector Clocks are all stored in vectorClock = {} java's object data structure with each key as key, and the key's value as an array with length of the number of replicas. Therefore if we have two keys and 3 replicas the vectorClock could look like:
 vectorClock = {'x':[0,0,0],'y':[0,0,0]} 
 
-For GET requests, the causal metadata tracking was simpler. If the key that the request is asking for isn't present, then it will simply return "key doesn't exist". If they key does exist it will return a message, the causal metadata, and the value for the corresponding key.  If a node receives a GET request for key, it must first find out the shard ID. If it is the same as its shard ID, it responds to the client. Otherwise, it forwards the GET requestto one of the members of<shard-id>. The node receiving the forwarded GET request recalculates the shardID of<key>to ensure that it has received the correct request. Afterwards, it responds to the forwarding node,which in turn replies back to the client.
+For GET requests, the causal metadata tracking was simpler. If the key that the request is asking for isn't present, then it will simply return "key doesn't exist". If they key does exist it will return a message, the causal metadata, and the value for the corresponding key.  
 No update to the replica's vector clock and no broadcasting is necessary since it's not a 'write' action, so there's no change in causal consistency. 
 
 Both DELETE and PUT functions require helper functions such as causalBroadcast(), deleteCausalBroadcast(), pointWiseMaximum() and compareVectorClocks()
@@ -73,6 +73,8 @@ Assigning nodes to shards in a consistent manner was done through parsing of an 
 Assigning keys to shards was done via consistent hashing. We utilized a hashring() object, which functions to 
 automatically assign both nodes (shards and keys) into slots in the ring
 - ADD PUT/GET/DELETE METHODOLOGY HERE
+- GET Requests: The node that recieves a GET request must for check if the shard ID of the request is equal to its (the node's) shard ID. If it is the same, it will respond back with a successful message, causal metadata, and the correct value. Otherwise, it will have to forward the GET request to any member of the shard-id, in our case we made it forward to the member of the first index in the array of nodes that's under the shard-id. (line 241: nodes[0]) That node which recieved the forwarded GET request will have to re-check if the ShardID of the key is correct and then will respond accordingly back to the forwarding node, which will respond back to the client. 
+
 
 
 - Resharding mechanism
