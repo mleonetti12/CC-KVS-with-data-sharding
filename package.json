@@ -10,6 +10,15 @@
   "license": "ISC",
   "dependencies": {
     "axios": "^0.21.1",
-    "express": "^4.17.1"
-  }
+    "express": "^4.17.1",
+    "hashring": "^3.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mleonetti12/CSE138_Assignment4.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mleonetti12/CSE138_Assignment4/issues"
+  },
+  "homepage": "https://github.com/mleonetti12/CSE138_Assignment4#readme"
 }
