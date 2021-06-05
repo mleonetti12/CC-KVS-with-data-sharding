@@ -22,8 +22,8 @@ Applied: Used to implement main method of resharding
 
 Maxwell Leonetti
 - shardRouter.js
-  - entirety
-  - all shard operations
+  - Entirety
+  - All shard operations
 - storeRouter.js
-  - resharding operation
+  - Resharding operation
   - setHashRing, /sync-kvs, /reshard, /put-keys, /update-hash
