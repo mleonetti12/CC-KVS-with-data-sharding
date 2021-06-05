@@ -16,7 +16,7 @@ https://www.toptal.com/big-data/consistent-hashing
 
 Learned: How adding/removing nodes from a consistent hashing ring affects overall key hashing
 
-Applied: Used to implement main method of resharding
+Applied: Used to implement main resharding algorithm
 
 # Team Contributions:
 
