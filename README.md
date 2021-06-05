@@ -27,3 +27,8 @@ Maxwell Leonetti
 - storeRouter.js
   - Resharding operation
   - setHashRing, /sync-kvs, /reshard, /put-keys, /update-hash
+
+Ming Jeng
+- storeRouter.js
+- the GET Operation
+- the DELETE Operation
