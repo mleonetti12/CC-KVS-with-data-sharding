@@ -73,23 +73,46 @@ shardRouter.route('/shard-id-key-count/:shardId')
 shardRouter.route('/add-member/:shardId')
 .put(async (req, res, next) => {
     const id = req.params.shardId;
-    let members = shards[id];
-    console.log(members);
+    // let members = shards[id];
+    // console.log(members);
     let node = req.body["socket-address"];
-    console.log(node);
-    if (!members) {
+    // console.log(node);
+    console.log('this is the id in add-member: ' + shards[id]);
+    if (!shards[id]) {
         res.status(404).json({"error": "Shard ID does not exist", "message": "error in PUT"});
     } else {
         if (!node) {
             res.status(400).json({"error": "No node specified", "message": "error in PUT"});
-        } else if (!members.includes(node)) {
-            members.push(node);
+        } else if (!shards[id].includes(node)) {
+            shards[id].push(node);
             // send req to this node to update kvs, also set its thisShard
             Req(node, 'PUT', '/key-value-store-shard/update/' + id, {"ss": shards});
             // then broadcast this PUT to other nodes
             for (var view of viewRouter.getView()) {
-                Req(view, 'PUT', '/key-value-store-shard/add-member/' + id, {"socket-address":node});
+                
+                Req(view, 'PUT', '/key-value-store-shard/add-member-hidden/' + id, {"socket-address":node});
             }
+            res.status(200).send();
+        } else {
+            res.status(400).json({"error": "Node already exists in shard", "message": "error in PUT"});
+        } 
+    }    
+});
+
+shardRouter.route('/add-member-hidden/:shardId')
+.put(async (req, res, next) => {
+    const id = req.params.shardId;
+    // let members = shards[id];
+    // console.log(members);
+    let node = req.body["socket-address"];
+    // console.log(node);
+    if (!shards[id]) {
+        res.status(404).json({"error": "Shard ID does not exist", "message": "error in PUT"});
+    } else {
+        if (!node) {
+            res.status(400).json({"error": "No node specified", "message": "error in PUT"});
+        } else if (!shards[id].includes(node)) {
+            shards[id].push(node);
             res.status(200).send();
         } else {
             res.status(400).json({"error": "Node already exists in shard", "message": "error in PUT"});
@@ -104,7 +127,10 @@ shardRouter.route('/update/:shardId')
     const id = req.params.shardId;
     thisShard = id;
     shards = req.body["ss"];
+    // console.log(shards);
+    console.log("id in update" + id);
     await storeRouter.getKVS(shards[id], true);
+    console.log("shard[id] in update" + shards[id]);
     res.status(200).send(); 
     
 });
@@ -136,10 +162,10 @@ shardRouter.route('/reshard')
 .put(async (req, res, next) => {
     let shardCount1 = req.body["shard-count"];
     // not enough nodes to reshard with this value
-    if (viewRouter.getView() < shardCount1 * 2) {
+    if (viewRouter.getView().length < shardCount1 * 2) {
         res.status(400).json({"message": "Not enough nodes to provide fault-tolerance with the given shard count!"});
     } else {
-        let prevShardCount = shardCount;
+        let prevShardCount = shardCount1;
         let promises = [];
         storeRouter.setHashRing(shardCount1); // update hashring
         for (view of viewRouter.getView()) {
@@ -251,7 +277,7 @@ function Req(view, method, path, dat) {
                     body += chunk;
                 });
                 res.on('end', function() {
-                    console.log(body);
+                    // console.log(body);
                     // resolve();
                 })
             });
@@ -343,4 +369,3 @@ function Get(views, path) {
         }
     })
 }
-

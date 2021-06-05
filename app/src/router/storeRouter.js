@@ -4,7 +4,7 @@ storeRouter.use(express.json());
 const http = require('http');
 
 
-const keyvalueStore = {};
+let keyvalueStore = {};
 var vectorClock = {};
 const OFFSET = 2;
 
@@ -54,7 +54,7 @@ function setKVS(newKVS) {
 
 // replace the KVS with newKVS
 function replaceKVS(newKVS) {
-    keyValueStore = newKVS;
+    keyvalueStore = newKVS;
 }
 
 // retrieve the KVS
@@ -64,7 +64,7 @@ function retrieveKVS() {
 
 // replace causal metadata for new
 function replaceCM(newCM) {
-    causalMetadata = newCM;
+    vectorClock = newCM;
 }
 
 // get length of KVS for shard-id-key-count
@@ -79,9 +79,9 @@ function setCM(newCM) {
 
 // get kvs from another replica and merge it with current kvs
 // or replace, depending on replace param
-function getKVS(views, replace) {
+function getKVS(views1, replace) {
     return new Promise(function(resolve, reject) {
-        for (var view of views) {
+        for (var view of views1) {
             let replicadownFlag = false;
             // const shards = shardRouter.getShards(); && shards[shardRouter.getThisShard()].includes(view)
             if (view != process.env.SOCKET_ADDRESS) {
@@ -101,7 +101,7 @@ function getKVS(views, replace) {
                         body += chunk;
                     });
                     res.on('end', function() {
-                        console.log(body);
+                        // console.log(body);
                         if (!replace) {
                             setKVS(JSON.parse(body).kvs); // add kvs to current KVSs
                             setCM(JSON.parse(body).cm); // add cm to current cm  
@@ -145,6 +145,7 @@ module.exports = {
     hashKey:hashKey
 };
 
+// Require it here to avoid circular dependency
 const shardRouter = require("./shardRouter.js")
 
 storeRouter.route('/')
@@ -158,6 +159,7 @@ storeRouter.route('/')
 // view-only route for ease in updating KVS
 storeRouter.route('/sync-kvs')
 .get(async (req, res) => {
+
     res.status(200).json({"message": "Retrieved successfully", "kvs": keyvalueStore, "cm": vectorClock});
 });
 
@@ -196,8 +198,10 @@ storeRouter.route('/reshard')
 // update kvs en masse for resharding
 storeRouter.route('/put-keys')
 .put(async (req, res) => {
-    setKVS(req.body["KVS"]);
+    console.log("kvs size sent" + Object.keys(req.body["KVS"]).length);
     setCM(req.body["CM"]);
+    setKVS(req.body["KVS"]);
+    console.log("total kvs size after sent" + Object.keys(keyvalueStore).length);
     res.status(200).send();
 });
 
@@ -210,16 +214,76 @@ storeRouter.route('/update-hash')
 
 storeRouter.route('/:key')
 .get(async (req, res) => {
-    const val = keyvalueStore[req.params.key];
-    if (!val){
-        res.status(404).json({"error": "Key does not exist", "message": "Error in GET"});
-    } else {
-        //vectorClock[req.params.key][]+=1 
-        res.status(200).json({"message": "Retrieved successfully", 
-                             "causal-metadata":vectorClock,
-                             "value": val});
+
+    const { key } = req.params;
+
+   // console.log('In storeRouter GET - key:',key)
+    var hashedKey = ring.hash(key);
+  //  console.log('In storeRouter GET - hashedKey:',hashedKey)
+    var shardId = ring.get(hashedKey);
+ //   console.log('In storeRouter GET - shardId:',shardId)
+    var shards = shardRouter.getShards();
+ //   console.log('In storeRouter GET - shards:',shards)
+    var nodes = shards[shardId]
+ //   console.log('In storeRouter GET - nodes:',nodes)
+    if(nodes.includes(process.env.SOCKET_ADDRESS)) { 
+        const val = keyvalueStore[key];
+        if (!val){
+            res.status(404).json({"error": "Key does not exist", "message": "Error in GET"});
+        } else {
+            //vectorClock[req.params.key][]+=1 
+                res.status(200).json({"message": "Retrieved successfully", 
+                                     "causal-metadata":vectorClock,
+                                     "value": val});
+            }
     }
-})
+    else{
+            var node = nodes[0];
+
+            const REPLICA_HOST = node.split(':')[0];
+            const port = node.split(':')[1];
+
+            // const data = JSON.stringify({
+            //     "value": value,
+            //     "causal-metadata": causalMetadata
+            // });
+            const options = {
+                protocol: 'http:',
+                host: REPLICA_HOST,
+                port: port,
+                //params: 
+                path: `/key-value-store/${key}`,
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    // 'Content-Length': data.length
+                    }
+            };
+            const req = http.request(options, function(resForward) {
+                console.log(resForward.statusCode);
+                var statusCode = resForward.statusCode;
+                let body = '';
+                resForward.on('data', function (chunk) {
+                    body += chunk;
+                });
+                resForward.on('end', function() {
+                    console.log(body);
+                    jsonForm = JSON.parse(body)                    
+                    res.status(statusCode).json({
+                        "message": jsonForm.message,
+                        "causal-metadata": jsonForm["causal-metadata"],
+                        "value": jsonForm["value"]
+                    })
+                })
+            });
+            req.on('error', function(err) {
+                console.log("Error: Request failed at " + view);
+            });
+            // req.write(data);
+            req.end();
+
+        }
+    })
 .put(async (req, res, next) => {
 
     checkViews();
@@ -231,6 +295,9 @@ storeRouter.route('/:key')
     const { key } = req.params;
     const { value } = req.body;
     const causalMetadata = req.body['causal-metadata'];
+
+    console.log('should enter', causalMetadata)
+
 
     if (!req.body["value"]) {
         res.status(400).json({
@@ -251,9 +318,14 @@ storeRouter.route('/:key')
 
         var nodes = shards[shardId]
 
-        if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+        console.log('shardId: ', shardId)
+        console.log('shards: ', shards)
+        console.log('nodes: ', nodes)
 
+        if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+            console.log('should enter',causalMetadata)
             if(causalMetadata.length == 0) {
+                console.log('causal metadata is 0')
                 keyvalueStore[key] = value;
                 vectorClock[key] = [];
                 for(var i = 0; i < numViews; i++) {
@@ -274,6 +346,7 @@ storeRouter.route('/:key')
                     } else {
                         vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
                     }
+                    console.log('-------------------', CURRENT_REPLICA_HOST)
                     res.status(200).json({
                         "message": "Updated successfully",
                         "causal-metadata": vectorClock,
@@ -312,6 +385,7 @@ storeRouter.route('/:key')
                     } else {
                         vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
                     }
+                    console.log('-----------------', CURRENT_REPLICA_HOST)
                     res.status(200).json({
                         "message": "Updated successfully",
                         "causal-metadata": vectorClock,
@@ -336,7 +410,15 @@ storeRouter.route('/:key')
                 }
             }
 
+            if(!req.body['broadcast']) {
+                console.log('   i am broadcasting ---------------- ',CURRENT_REPLICA_HOST)
+                causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock, nodes);
+            }
+
         } else {
+
+            console.log('in else')
+            console.log('redirecting with data', causalMetadata)
 
             var node = nodes[0];
 
@@ -360,15 +442,20 @@ storeRouter.route('/:key')
                     }
             };
             const req = http.request(options, function(resForward) {
-                console.log(resForward.statusCode);
+                console.log('The http request status code is: ', resForward.statusCode);
+                var statusCode = resForward.statusCode
                 let body = '';
                 resForward.on('data', function (chunk) {
                     body += chunk;
                 });
                 resForward.on('end', function() {
-                    console.log(body);
-                    res.json({
-                        body
+                    console.log('Ending', body);
+                    //Fix here
+                    jsonForm = JSON.parse(body)                    
+                    res.status(statusCode).json({
+                        "message": jsonForm.message,
+                        "causal-metadata": jsonForm["causal-metadata"],
+                        "shard-id": jsonForm["shard-id"]
                     })
                 })
             });
@@ -379,9 +466,6 @@ storeRouter.route('/:key')
             req.end();
         }
 
-        if(!req.body['broadcast']) {
-            causalBroadcast(CURRENT_REPLICA_HOST, key, value, vectorClock);
-        }
     }
     
 })
@@ -391,28 +475,82 @@ storeRouter.route('/:key')
     const CURRENT_REPLICA_HOST = REPLICA.split(':')[0];  
     const causalMetadata = req.body['causal-metadata']
     const key = req.params.key
-    const val = keyvalueStore[key];
 
     //Delete key value store
-    if (!val){
-        res.status(404).json({"error": "Key does not exist", "message": "Error in DELETE"});
-    } else {
-        if(await compareVectorClocks(causalMetadata)){
-            delete keyvalueStore[key];
-            //creates causal metadata and increment 1 for current replica since it's a write operation
-            deleteCausalBroadcast(CURRENT_REPLICA_HOST, key,causalMetadata)
-            vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
-            //broadcast to all other replicas
-            res.status(200).json({"message":"Deleted successfully","causal-metadata":vectorClock});
+   //  var hashedKey = ring.hash(key)
+        var shardId = ring.get(key);
 
-        }else{
-            res.status(404).json({"error": "Inconsistent causality", "message": "All causally preceding operations must be complete first before applying DELETE"});
+        var shards = shardRouter.getShards();
+
+        var nodes = shards[shardId]
+
+    if(nodes.includes(process.env.SOCKET_ADDRESS)) {
+        const val = keyvalueStore[key];
+        if (!val){
+            res.status(404).json({"error": "Key does not exist", "message": "Error in DELETE"});
+        } else {
+
+            if(await compareVectorClocks(causalMetadata)){
+                delete keyvalueStore[key];
+                //creates causal metadata and increment 1 for current replica since it's a write operation
+                deleteCausalBroadcast(CURRENT_REPLICA_HOST, key,causalMetadata)
+                vectorClock[key][VECTOR_CLOCK_INDEX] = vectorClock[key][VECTOR_CLOCK_INDEX]+1;
+                //broadcast to all other replicas
+                res.status(200).json({"message":"Deleted successfully","causal-metadata":vectorClock,"shard-id":shardId});
+
+            }else{
+                res.status(404).json({"error": "Inconsistent causality", "message": "All causally preceding operations must be complete first before applying DELETE"});
+            }
         }
+    }
+    else{
+        let body = await forward_delete(nodes);
+
     }
 })
 .all(async(req,res,next) => {
     res.status(405).send();
 });
+
+function forward_delete(nodes){
+        var node = nodes[0];
+        const REPLICA_HOST = node.split(':')[0];
+        const port = node.split(':')[1];
+
+        const data = JSON.stringify({
+            "value": value,
+            "causal-metadata": causalMetadata,
+            "broadcast": true
+        });
+        const options = {
+            protocol: 'http:',
+            host: REPLICA_HOST,
+            port: port,
+            //params: 
+            path: `/key-value-store/${key}`,
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': data.length
+                }
+        };
+        const req = http.request(options, function(res) {
+            console.log(res.statusCode);
+            let body = '';
+            res.on('data', function (chunk) {
+                body += chunk;
+            });
+            res.on('end', function() {
+                console.log(body);
+            })
+        });
+        req.on('error', function(err) {
+            console.log("Error: Request failed at " + view);
+        });
+        req.write(data);
+        req.end();
+}
+
 async function compareVectorClocks(metadataVC) {
 
     for(var key in vectorClock) {
@@ -428,10 +566,16 @@ async function compareVectorClocks(metadataVC) {
 }
 
 
-async function causalBroadcast(CURRENT_REPLICA_HOST, key, value, causalMetadata) {
-    for(view of views) {
+async function causalBroadcast(CURRENT_REPLICA_HOST, key, value, causalMetadata, nodes) {
+    for(view of nodes) {
         const REPLICA_HOST = view.split(':')[0];
         if(REPLICA_HOST != CURRENT_REPLICA_HOST) {
+            console.log('CURRENT_REPLICA_HOST', CURRENT_REPLICA_HOST)
+            console.log('key', key)
+            console.log('value', value)
+            console.log('nodes', nodes)
+            console.log('view', view)
+            console.log('REPLICA_HOST', REPLICA_HOST)
             const port = view.split(':')[1];
             const data = JSON.stringify({
                 "value": value,
@@ -517,8 +661,8 @@ function checkViews() {
 function pointwiseMaximum(localVectorClock, incomingVectorClock) {
     var newVectorClock = {};
     //TODO? Assuming incomingVectorClock always has more keys
-    console.log(localVectorClock);
-    console.log(incomingVectorClock);
+    console.log('local', localVectorClock);
+    console.log('incoming', incomingVectorClock);
     
     for(var key in incomingVectorClock) {
         if(!localVectorClock.hasOwnProperty(key)){
