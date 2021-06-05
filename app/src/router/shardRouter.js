@@ -162,7 +162,7 @@ shardRouter.route('/reshard')
 .put(async (req, res, next) => {
     let shardCount1 = req.body["shard-count"];
     // not enough nodes to reshard with this value
-    if (viewRouter.getView() < shardCount1 * 2) {
+    if (viewRouter.getView().length < shardCount1 * 2) {
         res.status(400).json({"message": "Not enough nodes to provide fault-tolerance with the given shard count!"});
     } else {
         let prevShardCount = shardCount1;
