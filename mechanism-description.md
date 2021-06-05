@@ -59,7 +59,56 @@ A clear possible false positive case is where a replica is up, but fails to resp
 # Sharding Keys across Nodes
 
 - 1 Assigning nodes to shards
-- Assigning keys to shards
+
+Assigning nodes to shards in a consistent manner was done through parsing of an array of views:
+ - sorting the array to ensure equal order among nodes
+ - partition the array into SHARD_COUNT chunks of size floor(nodes.length / SHARD_COUNT)
+ - assign nodes to each of these chunks evenly, these act as the shards
+ - all excess nodes are then added to the first shard
+ 
+ 
+- Assigning keys to shards 
+
+Assigning keys to shards was done via consistent hashing. We utilized a hashring() object, which functions to 
+automatically assign both nodes (shards and keys) into slots in the ring
+- ADD PUT/GET/DELETE METHODOLOGY HERE
+
+
 - Resharding mechanism
+
+Resharding begins by first having every node in the view update its hashring with the new shard count
+
+It then assigns nodes to the new shards that have been generated, and broadcasts this and the above operation to all nodes
+
+It then calculates the difference between the previous number of nodes and the new shard count
+
+If they are equal, it returns
+
+If nodes were added, runs the addition protocal
+
+If deleted, runs the deletion protocol
+
+Addition:
+
+- Loop through the nodes assigned to the newly added shard (end of ring)
+- they loop through their own kvs, if a key hashes to a different shard
+- add it to a json object along with the metadata, then mass put it to the correct shard
+
+
+Deletion:
+
+- Loop through the nodes to be removed, from the end forwards
+- then run the same operations as addition
+
+
+The calling node then checks if all its keys are supposed to be in its designated shard, it true do nothing
+
+Else the key value store is stale, get the correct one from a node in the same shard, and replace
+
+The calling node then broadcasts this check to all other nodes in the view
+
+This mechanism ensures even distribution of keys, as the hashring() object generates virtual nodes (40 per node) which are added to the ring
+ensuring mostly even distribution on resharding
+
 
 
